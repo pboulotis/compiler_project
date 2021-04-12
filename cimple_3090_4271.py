@@ -128,6 +128,7 @@ def makelist(x):
     x_list[0] = x # pass the x value to the new list   
     
     return x_list
+  
 # Merges two lists
 def merge(list1,list2):
     merged = list1 + list2
