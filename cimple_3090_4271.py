@@ -149,11 +149,8 @@ def backpatch(list_given, z):  # list is a close resemblance to list(), so we na
     global quad_list, quad_num
 
     for i in range(quad_num-1):  # we want to start from 0, not 1
-        # A temporary list to detect the list that equals the list given
-        temp_list = [quad_list[i][0], quad_list[i][1], quad_list[i][2], "_"]
-        if (temp_list == list_given):
+        if(i in list_given):  # searches the list given to find the number of quad indexed
             quad_list[i][3] = z  # completes the specific quad list by adding the z value
-
 
 # ----------------------------------------------------------------------------------------------------------------------------
 # File handling 
