@@ -60,12 +60,11 @@ digit_state = 2
 lesser_than_state = 3
 greater_than_state = 4
 colon_state = 5
-bracket_state = 6
-comment_state = 7
-final_state = 8
-EOF_state = 9
+comment_state = 6
+final_state = 7
+EOF_state = 8
 
-lex_states = [start_state, word_state, digit_state, lesser_than_state, greater_than_state, colon_state, bracket_state,
+lex_states = [start_state, word_state, digit_state, lesser_than_state, greater_than_state, colon_state,
               comment_state, final_state, EOF_state]
 
 # Errors
@@ -91,6 +90,9 @@ reserved = ['program', 'declare', 'if', 'else',
 quad_num = 0  # the number of quads created
 quad_list = []  # the list of all quads
 T_value = 0  # the number of the temporary variable used in "T_<T_value>"
+program_id = ""  # the name of the program
+function_flag = False  # true if there are functions/procedures in the cimple code.
+# If there are, we don't need to create a C file
 
 
 # Returns the number of the next quad to be created
@@ -102,7 +104,7 @@ def nextquad():
 
 # Creates a new quad and adds it to the quad_list
 def genquad(op, x, y, z):
-    global quad_num
+    global quad_num, quad_list
 
     quad = [op, x, y, z]  # give the values of current quad to this list
 
@@ -142,14 +144,15 @@ def merge(list1, list2):
     return merged
 
 
-# TODO
-# def backpatch(list,z):
+# Fills the z value, when needed, the "destination"
+def backpatch(list_given, z):  # list is a close resemblance to list(), so we named it list_given
+    global quad_list, quad_num
 
-
-# This will be used for printing the correct error when something
-def printError(error, line):
-    print('Error: ' + error + ' at line ' + str(line))
-    sys.exit()
+    for i in range(quad_num-1):  # we want to start from 0, not 1
+        # A temporary list to detect the list that equals the list given
+        temp_list = [quad_list[i][0], quad_list[i][1], quad_list[i][2], "_"]
+        if (temp_list == list_given):
+            quad_list[i][3] = z  # completes the specific quad list by adding the z value
 
 
 # ----------------------------------------------------------------------------------------------------------------------------
@@ -174,6 +177,12 @@ file_line = 1  # first line of the file
 # ----------------------------------------------------------------------------------------------------------------------------
 # Lexical Analysis
 # ----------------------------------------------------------------------------------------------------------------------------
+# This will be used for printing the correct error when something
+def printError(error, line):
+    print('Error: ' + error + ' at line ' + str(line))
+    sys.exit()
+
+
 def lex():
     global file_line
     state = start_state  # start with the state 0: start state
@@ -406,7 +415,13 @@ def lex():
 
         # EOF state analysis
         elif (state == EOF_state):
-            print("Hopefully, everything is fine")
+            # We want to detect if there are characters after the EOF symbols has been detected
+            # If there are the following warning message will be displayed
+            file_pos += 1
+            file.seek(file_pos)
+            char = file.read(1)
+            if (char):
+                print("Warning: There's code after the EOF symbol was detected")
             state = final_state
 
     # If we reached this state, then a token has been detected
@@ -423,7 +438,6 @@ def lex():
     result.append(token_type)
     # Position 1:The token string 
     result.append(token_string)
-    print(token_string)
     return result
 
 
@@ -432,7 +446,7 @@ while(1):
         lexres = lex()
         if (lexres[0] == "EOF symbol"):
                 break
-        # print(lexres)
+        print(lexres)
 '''
 
 
@@ -455,7 +469,7 @@ def syntax():
 
 # "program" is the starting symbol
 def program():
-    global lex_result, file_line  # the file line will be used for the error messages
+    global lex_result, file_line, program_id  # the file line will be used for the error messages
 
     if (lex_result[0] == 'program'):
         # program token detected
@@ -464,6 +478,7 @@ def program():
         if (lex_result[0] == 'id'):
             # program name given
             lex_result = lex()  # search for next token
+            program_id = lex_result[1]  # save the program's name
 
             block()
 
@@ -482,6 +497,7 @@ def program():
 
 # a block with declarations , subprogram and statement
 def block():
+    global program_id
     # check if there are declarations
     declarations()
 
@@ -537,10 +553,11 @@ def varlist():
 
 # zero or more subprograms allowed
 def subprograms():
-    global lex_result
+    global lex_result , function_flag
 
     while ((lex_result[0] == 'procedure') or (lex_result[0] == 'function')):
-        # detected a 'procedure' or 'function' keyword  proceed to subprogram analysis              
+        # detected a 'procedure' or 'function' keyword  proceed to subprogram analysis
+        function_flag = True  # we don't need to create a C file
         subprogram()
     return
 
@@ -833,7 +850,7 @@ def switchcase_stat():
                     lex_result = lex()  # search for next token
 
                     statements()
-                    
+
                 else:
                     printError("Right parethensis was not detected after 'switchcase' statement", file_line)
 
@@ -850,7 +867,7 @@ def switchcase_stat():
             printError("'default' statement was not detected after 'switchcase' statement ", file_line)
     else:
         printError("'switchcase' statement was not detected", file_line)
-    
+
 
 # forcase statement
 def forcase_stat():
@@ -872,7 +889,7 @@ def forcase_stat():
                     lex_result = lex()  # search for next token
 
                     statements()
-                    
+
 
                 else:
                     printError("Right parethensis was not detected after 'forcase' statement", file_line)
@@ -913,7 +930,7 @@ def incase_stat():
                     lex_result = lex()  # search for next token
 
                     statements()
-                    
+
                 else:
                     printError("Right parethensis was not detected after 'incase' statement", file_line)
             else:
@@ -922,6 +939,7 @@ def incase_stat():
     else:
         printError("'incase' statement was not detected", file_line)
     return
+
 
 # return statement
 def return_stat():
@@ -1251,12 +1269,6 @@ def add_op():
         lex_result = lex()  # search for next token
 
         return
-
-
-'''     
-    else:
-        printError("Addition operator was not detected",file_line)    
-'''
 
 
 # Multiplier operator analysis
