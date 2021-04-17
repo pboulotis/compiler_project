@@ -90,9 +90,11 @@ reserved = ['program', 'declare', 'if', 'else',
 quad_num = 0  # the number of quads created
 quad_list = []  # the list of all quads
 T_value = 0  # the number of the temporary variable used in "T_<T_value>"
-program_id = ""  # the name of the program
+program_name = ""
+name = ""  # the name of a procedure or function
 function_flag = False  # true if there are functions/procedures in the cimple code.
 # If there are, we don't need to create a C file
+m_label = ""  # this value is given CV,REF,RET depending on the function's parameter
 
 
 # Returns the number of the next quad to be created
@@ -151,6 +153,7 @@ def backpatch(list_given, z):  # list is a close resemblance to list(), so we na
     for i in range(quad_num-1):  # we want to start from 0, not 1
         if(i in list_given):  # searches the list given to find the number of quad indexed
             quad_list[i][3] = z  # completes the specific quad list by adding the z value
+
 
 # ----------------------------------------------------------------------------------------------------------------------------
 # File handling 
@@ -453,7 +456,7 @@ while(1):
 # ----------------------------------------------------------------------------------------------------------------------------
 
 def syntax():
-    global lex_result
+    global lex_result, function_flag
     lex_result = lex()  # the result of the lex() is stored here and will be used for the analysis
 
     # Execute the program analysis
@@ -461,26 +464,34 @@ def syntax():
 
     print("Syntax Analysis completed successfully")
 
+    # int_file_create()
+
+    #if(function_flag == False):
+    #    c_file_create()
+
     return
 
 
 # "program" is the starting symbol
 def program():
-    global lex_result, file_line, program_id  # the file line will be used for the error messages
+    global lex_result, file_line, program_name  # the file line will be used for the error messages
 
     if (lex_result[0] == 'program'):
         # program token detected
         lex_result = lex()  # search for next token
 
         if (lex_result[0] == 'id'):
-            # program name given
-            lex_result = lex()  # search for next token
-            program_id = lex_result[1]  # save the program's name
 
+            program_name = lex_result[1]  # save the program's name
+            lex_result = lex()  # search for next token
+
+            genquad("begin_block", program_name, "_", "_")
             block()
 
             if (lex_result[0] == 'EOF symbol'):
                 # End of file reached
+                genquad("halt", "_", "_", "_")
+                genquad("end_block", program_name, "_", "_")
                 return
 
             else:
@@ -494,20 +505,28 @@ def program():
 
 # a block with declarations , subprogram and statement
 def block():
-    global program_id
+    global name
+
     # check if there are declarations
     declarations()
 
     # check if there are subprograms
     subprograms()
 
-    # check if there are statements
-    statements()
+    if(name == "null"):
+        # check if there are statements
+        statements()
+    else:
+        genquad("begin_block", name, "_", "_")
+        # check if there are statements
+        statements()
+        genquad("end_block", name, "_", "_")
+        name = "null"
 
 
 # declaration of variables , zero or more " declare " allowed
 def declarations():
-    global lex_result, file_line
+    global lex_result, file_line, name
 
     while (lex_result[0] == 'declare'):
         # declare token detected
@@ -519,6 +538,7 @@ def declarations():
         if (lex_result[0] == 'question mark'):
             lex_result = lex()  # search for next token
 
+            name = "null"
             block()  # go back to block() to check the other functions
 
         else:
@@ -550,18 +570,19 @@ def varlist():
 
 # zero or more subprograms allowed
 def subprograms():
-    global lex_result , function_flag
+    global lex_result, function_flag
 
     while ((lex_result[0] == 'procedure') or (lex_result[0] == 'function')):
         # detected a 'procedure' or 'function' keyword  proceed to subprogram analysis
         function_flag = True  # we don't need to create a C file
         subprogram()
+
     return
 
 
 # a subprogram is a function or a procedure, followed by parameters and block
 def subprogram():
-    global lex_result, file_line
+    global lex_result, file_line, name
 
     # Procedure's analysis
     if (lex_result[0] == 'procedure'):
@@ -570,6 +591,7 @@ def subprogram():
 
         if (lex_result[0] == 'id'):
             # procedure's name is given
+            name = lex_result[1]  # save the name of the procedure
             lex_result = lex()  # search for next token
 
             if (lex_result[0] == 'left parethensis'):
@@ -579,6 +601,7 @@ def subprogram():
                 formalparlist()  # inside parethensis parameters analysis
 
                 if (lex_result[0] == 'right parethensis'):
+
                     lex_result = lex()  # search for next token  # search for next token
 
                     block()  # go back to block() to check the other functions
@@ -598,6 +621,7 @@ def subprogram():
 
         if (lex_result[0] == 'id'):
             # function's name is given
+            name = lex_result[1]  # save the name of the function
             lex_result = lex()  # search for next token
 
             if (lex_result[0] == 'left parethensis'):
@@ -1279,6 +1303,94 @@ def mul_op():
 
 
 syntax()
-
 # The file is no longer needed so close it
 file.close()
+
+
+# ----------------------------------------------------------------------------------------------------------------------------
+# C file handling
+# ----------------------------------------------------------------------------------------------------------------------------
+def c_file_create():
+    global program_name
+
+    variables = []  # the variables declared in the program
+    variable_string = ""  # will be used for printing the variables
+    relops = rel_symbols.append("=")  # all the =,>,<,<>,>=,<= symbols
+    relop_id = ""  # this wil be used in its respective file.write()
+
+    for i in quad_list:
+        if(quad_list[i][0] == ":="):  # detected a variable
+            variables.append(quad_list[i][3])  # add it to the list
+            variable_string += quad_list[i][3] + ","  # convert the list to a string
+
+    # for i in variables:
+    #    variable_string += variables[i] + ","  # convert the list to a string
+
+    variable_string = variable_string[:-1] + ";"  # replace the last "," with ";"
+
+    c_file = open(program_name + '.c', 'w')  # creates the .c file
+    c_file.write("#include <stdio.h>\n")  # will be need for the functions used
+    c_file.write("int main() \n" + "{\n")
+    c_file.write("\t" + "int " + variable_string + "\n")  # writes all the variables declared
+
+    for i in quad_list:
+        # first line
+        if(quad_list[i][0] == "begin_block"):
+            c_file.write("\t" + "L_" + str(i) + ":")
+
+        # declaration statement
+        elif(quad_list[i][0] == ":="):
+            c_file.write("\t" + "L_" + str(i) + ":" + str(quad_list[i][3]) + "=" + str(quad_list[i][1]) + ";" + " //(" + str(quad_list[i]) + ")")
+
+        # numerical operation statements
+        elif((quad_list[i][0] == "+") or (quad_list[i][0] == "-") or (quad_list[i][0] == "*") or (quad_list[i][0] == "/")):
+            c_file.write("\t" + "L_" + str(i) + ":" + str(quad_list[i][3]) + "=" + str(quad_list[i][1]) + str(quad_list[i][0]) + str(quad_list[i][2]) + ";" + " //(" + str(quad_list[i]) + ")")
+
+        # if statements
+        elif (quad_list[i][0] in relops):
+
+            if(quad_list[i][0] == "="):  # equal in c is ==
+                relop_id = "=="
+            elif(quad_list[i][0] == "<>"):  # not equal in c is !=
+                relop_id = "!="
+            else:
+                relop_id = str(quad_list[i][0])
+            c_file.write("\t" + "L_" + str(i) + ":" + "if (" + str(quad_list[i][1]) + relop_id + str(quad_list[i][2]) + ") goto L_" + str(quad_list[i][3]) + ";" + " //(" + str(quad_list[i]) + ")")
+
+        # jump statement
+        elif (quad_list[i][0] == "jump"):
+            c_file.write("\t" + "L_" + str(i) + ":" + "goto L_" + str(quad_list[i][3]) + ";" + " //(" + str(quad_list[i]) + ")")
+
+        # end of program
+        elif (quad_list[i][0] == "halt"):
+            c_file.write("\t" + "L_" + str(i) + ":" + "return 0;" + " //(" + str(quad_list[i]) + ")")
+
+        # return statement
+        elif (quad_list[i][0] == "retv"):
+            c_file.write("\t" + "L_" + str(i) + ":" + "return " + str(quad_list[i][0]) + ";" + " //(" + str(quad_list[i]) + ")")
+
+        # input - scanf statement
+        elif (quad_list[i][0] == "inp"):
+            c_file.write("\t" + "L_" + str(i) + ":" + "scanf(%d,&" + str(quad_list[i][1]) + "); //(" + str(quad_list[i]) + ")")
+
+        # output - printf statement
+        elif (quad_list[i][0] == "out"):
+            c_file.write("\t" + "L_" + str(i) + ":" + "printf(%d," + str(quad_list[i][1]) + "); //(" + str(quad_list[i]) + ")")
+
+        else:
+            print("Something went wrong with the creation of the C file")
+            sys.exit()
+
+    c_file.write("}")
+    c_file.close()  # the file is completed
+
+
+# ----------------------------------------------------------------------------------------------------------------------------
+# int file handling
+# ----------------------------------------------------------------------------------------------------------------------------
+def int_file_create():
+    global program_name
+
+    int_file = open(program_name + '.int', 'w')  # creates the .int file
+
+    int_file.close()  # the file is completed
