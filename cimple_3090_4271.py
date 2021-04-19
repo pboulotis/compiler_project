@@ -91,7 +91,7 @@ quad_num = 0  # the number of quads created
 quad_list = []  # the list of all quads
 T_value = 0  # the number of the temporary variable used in "T_<T_value>"
 program_name = ""
-name = ""  # the name of a procedure or function
+# name = ""  # the name of a procedure or function
 function_flag = False  # true if there are functions/procedures in the cimple code.
 # If there are, we don't need to create a C file
 m_label = ""  # this value is given CV,REF,RET depending on the function's parameter
@@ -112,6 +112,7 @@ def genquad(op, x, y, z):
 
     quad_list.append(quad)  # append the list created to the list of all the quads
     quad_num += 1  # a new quad has been created so +1 to the total number of quads
+    print(quad)
 
 
 # Creates and returns T_<T_value>
@@ -466,7 +467,7 @@ def syntax():
 
     # int_file_create()
 
-    #if(function_flag == False):
+    # if(function_flag == False):
     #    c_file_create()
 
     return
@@ -486,7 +487,7 @@ def program():
             lex_result = lex()  # search for next token
 
             genquad("begin_block", program_name, "_", "_")
-            block()
+            block(program_name)
 
             if (lex_result[0] == 'EOF symbol'):
                 # End of file reached
@@ -504,8 +505,8 @@ def program():
 
 
 # a block with declarations , subprogram and statement
-def block():
-    global name
+def block(name):
+    global program_name
 
     # check if there are declarations
     declarations()
@@ -513,7 +514,7 @@ def block():
     # check if there are subprograms
     subprograms()
 
-    if(name == "null"):
+    if((name == "null") or (name == program_name)):
         # check if there are statements
         statements()
     else:
@@ -521,7 +522,6 @@ def block():
         # check if there are statements
         statements()
         genquad("end_block", name, "_", "_")
-        name = "null"
 
 
 # declaration of variables , zero or more " declare " allowed
@@ -539,7 +539,7 @@ def declarations():
             lex_result = lex()  # search for next token
 
             name = "null"
-            block()  # go back to block() to check the other functions
+            block(name)  # go back to block() to check the other functions
 
         else:
             printError("Declarations: ';' character was not detected", file_line)
@@ -604,7 +604,7 @@ def subprogram():
 
                     lex_result = lex()  # search for next token  # search for next token
 
-                    block()  # go back to block() to check the other functions
+                    block(name)  # go back to block() to check the other functions
 
                     return
                 else:
@@ -632,7 +632,7 @@ def subprogram():
                 if (lex_result[0] == 'right parethensis'):
                     lex_result = lex()  # search for next token
 
-                    block()  # go back to block() to check the other functions
+                    block(name)  # go back to block() to check the other functions
 
                     return
 
@@ -911,7 +911,6 @@ def forcase_stat():
 
                     statements()
 
-
                 else:
                     printError("Right parethensis was not detected after 'forcase' statement", file_line)
 
@@ -988,11 +987,12 @@ def return_stat():
 
 # call statement
 def call_stat():
-    global lex_result, file_line
+    global lex_result, file_line, function_flag
 
     if (lex_result[0] == 'call'):
         # call token detected
         lex_result = lex()  # search for next token
+        function_flag = True
 
         if (lex_result[0] == 'id'):
             lex_result = lex()  # search for next token
@@ -1112,36 +1112,59 @@ def actualparitem():
 def condition():
     global lex_result
 
-    boolterm()
+    # B -> Q1 {P1} (or {P2} Q2 {P3})*
+
+    Q1_list = boolterm()
+
+    # {P1}
+    B_true = Q1_list[0]  # B.true = Q1.true
+    B_false = Q1_list[1]  # B.false = Q1.false
 
     while (lex_result[0] == 'or'):
-        # or token detected
+        # {P2}:
+        backpatch(B_false, nextquad())
         lex_result = lex()  # search for next token
 
-        boolterm()
+        # {P3}:
+        Q2_list = boolterm()
+        B_true = merge(B_true, Q2_list[0])
+        B_false = Q2_list[1]  # B.false = Q2.false
 
-    return
+    B_list = [B_true, B_false]
+    return B_list
 
 
 # term in boolean expression
 def boolterm():
     global lex_result
 
-    boolfactor()
+    # Q -> R1 {P1} (and {P2} R2 {P3})*
+    # {P1}:
+    R1_list = boolfactor()
 
-    while (lex_result[0] == 'and'):
-        # and token detected
+    Q_true = R1_list[0]  # Q.true = R1.true
+    Q_false = R1_list[1]  # Q.false = R1.false
+
+    while (lex_result[0] == 'and'):  # and token detected
+        # {P2}:
+        backpatch(Q_true, nextquad())
         lex_result = lex()  # search for next token
 
-        boolfactor()
+        # {P3}:
+        R2_list = boolfactor()
+        Q_false = merge(Q_false, R2_list[1])
+        Q_true = R2_list[0]
 
-    return
+    Q_list = [Q_true, Q_false]
+
+    return Q_list
 
 
 # factor in boolean expression
 def boolfactor():
     global lex_result, file_line
 
+    # R -> not (B) {P1}
     if (lex_result[0] == 'not'):
         # not statement detected
         lex_result = lex()  # search for next token
@@ -1149,37 +1172,56 @@ def boolfactor():
         if (lex_result[0] == 'left block'):
             lex_result = lex()  # search for next token
 
-            condition()
+            B_list = condition()
 
             if (lex_result[0] == 'right block'):
                 lex_result = lex()  # search for next token
-                return
+                R_true = B_list[1]  # R.true = B.false
+                R_false = B_list[0]  # R.false = B.true
+
+                R_list = [R_true, R_false]  # save it to a list that we will return
+
+                return R_list
             else:
                 printError("Boolfactor: Right block was not detected after 'not' statement", file_line)
         else:
             printError("Boolfactor: Left block was not detected before 'not' statement", file_line)
 
-    # not statement is not detected 
+    # not statement is not detected
+    # R -> (B) {P1}
     elif (lex_result[0] == 'left block'):
         lex_result = lex()  # search for next token
 
-        condition()
+        B_list = condition()
 
         if (lex_result[0] == 'right block'):
             lex_result = lex()  # search for next token
-            return
+
+            R_true = B_list[0]  # R.true = B.true
+            R_false = B_list[1]  # R.false = B.false
+
+            R_list = [R_true, R_false]  # save it to a list that we will return
+
+            return R_list
 
         else:
             printError("Boolfactor: Right block was not detected after boolfactor statement", file_line)
     else:
+        # R -> E1 relop E2 {P1}
 
-        expression()
+        E1_place = expression()
 
-        relational_op()
+        relop = relational_op()
 
-        expression()
+        E2_place = expression()
 
-    return
+        R_true = makelist(nextquad())
+        genquad(relop, E1_place, E2_place, "_")
+        R_false = makelist(nextquad())
+        genquad("jump", "_", "_", "_")
+        R_list = [R_true, R_false]
+
+        return R_list
 
 
 # arithmetic expression
@@ -1188,28 +1230,47 @@ def expression():
 
     optional_sign()
 
-    term()
+    # E -> T1 ( + T2 {P1}) * {P2}
+    T1_place = term()
 
     while (lex_result[0] == 'plus' or lex_result[0] == 'minus'):
+        symbol = lex_result[1]
         add_op()
 
-        term()
+        T2_place = term()
 
-    return
+        # {P1}:
+        w = newtemp()
+        genquad(symbol, T1_place, T2_place, w)
+        T1_place = w
+
+    # {P2}:
+    E_place = T1_place
+
+    return E_place
 
 
 # term in arithmetic expression       
 def term():
     global lex_result, file_line
 
-    factor()
+    # T -> F1 ( x F2 {P1}) * {P2}
+    F1_place = factor()
 
     while (lex_result[0] == 'multiply' or lex_result[0] == 'divide'):
+        symbol = lex_result[1]
         mul_op()
 
-        factor()
+        F2_place = factor()
+        # {P1}:
+        w = newtemp()
+        genquad(symbol, F1_place, F2_place, w)
+        F1_place = w
 
-    return
+    # {P2}:
+    T_place = F1_place
+
+    return T_place
 
 
 # factor in arithmetic expression
@@ -1217,27 +1278,30 @@ def factor():
     global lex_result, file_line
 
     if (lex_result[0] == 'number'):
+        F_place = lex_result[1]
         lex_result = lex()  # search for next token
-        # return   
+
+        return F_place
 
     elif (lex_result[0] == 'left parethensis'):
         lex_result = lex()  # search for next token
 
-        expression()
+        F_place = expression()  # F.place = E.place
 
         if (lex_result[0] == 'right parethensis'):
             lex_result = lex()  # search for next token
-            # return                               
+
+            return F_place
         else:
             printError("Factor: Right parethensis was not detected after the number expression", file_line)
 
     elif (lex_result[0] == 'id'):
+        F_place = lex_result[1]  # F.place = id.place
 
         idtail()
-        return
+        return F_place
     else:
         printError("Factor: Number value or variable name was expected ", file_line)
-    return
 
 
 # follows a function of procedure ( parethensis and parameters )
@@ -1257,15 +1321,17 @@ def idtail():
     return
 
 
-# sumbols "+" and " -" ( are optional )
+# symbols "+" and " -" ( are optional )
 def optional_sign():
     global lex_result
 
+    symbol = lex_result[1]  # the '+' or '-' symbol if detected
+
     if ((lex_result[0] == 'plus') or (lex_result[0] == 'minus')):
-        # '+' or '-' tokens detected             
+        # '+' or '-' tokens detected
         add_op()
 
-    return
+    return symbol
 
 
 # lexer rules : relational , arithmetic operations , multiplying operations
@@ -1275,9 +1341,10 @@ def relational_op():
     relationals = ['equal', 'lesser than', 'lesser equal', 'not equal', 'greater than', 'greater equal']
 
     if (lex_result[0] in relationals):  # '=','<','<=','<>','>','>='
+        symbol = lex_result[1]  # save the symbol found
         lex_result = lex()  # search for next token
 
-        return
+        return symbol
     else:
         printError("Relational operator was not detected", file_line)
 
@@ -1329,7 +1396,7 @@ def c_file_create():
     variable_string = variable_string[:-1] + ";"  # replace the last "," with ";"
 
     c_file = open(program_name + '.c', 'w')  # creates the .c file
-    c_file.write("#include <stdio.h>\n")  # will be need for the functions used
+    c_file.write("#include <stdio.h> \t// for the printf and scanf functions \n")  # will be need for the functions used
     c_file.write("int main() \n" + "{\n")
     c_file.write("\t" + "int " + variable_string + "\n")  # writes all the variables declared
 
@@ -1392,5 +1459,8 @@ def int_file_create():
     global program_name
 
     int_file = open(program_name + '.int', 'w')  # creates the .int file
+
+    for i in quad_list:
+        int_file.write(str(i) + ": " + str(quad_list[i][0]) + " " + str(quad_list[i][1]) + " " + str(quad_list[i][2]) + " " + str(quad_list[i][3]))
 
     int_file.close()  # the file is completed
