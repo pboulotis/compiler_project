@@ -84,9 +84,9 @@ reserved = ['program', 'declare', 'if', 'else',
             'function', 'procedure', 'call', 'return', 'in', 'inout',
             'input', 'print']
 
-# ----------------------------------------------------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------------------------------------------------
 # Functions and variables used for the intermediate code phase
-# ----------------------------------------------------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------------------------------------------------
 quad_num = 0  # the number of quads created
 quad_list = []  # the list of all quads
 T_value = 0  # the number of the temporary variable used in "T_<T_value>"
@@ -156,9 +156,9 @@ def backpatch(list_given, z):  # list is a close resemblance to list(), so we na
             quad_list[i][3] = z  # completes the specific quad list by adding the z value
 
 
-# ----------------------------------------------------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------------------------------------------------
 # File handling 
-# ----------------------------------------------------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------------------------------------------------
 # Check if a cimple file is not given by the command file_line
 if (len(sys.argv) == 1):
     print("There's not a cimple file given")
@@ -175,9 +175,9 @@ file = open(sys.argv[1], 'r')
 file_line = 1  # first line of the file
 
 
-# ----------------------------------------------------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------------------------------------------------
 # Lexical Analysis
-# ----------------------------------------------------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------------------------------------------------
 # This will be used for printing the correct error when something
 def printError(error, line):
     print('Error: ' + error + ' at line ' + str(line))
@@ -451,10 +451,10 @@ while(1):
 '''
 
 
-# ---------------------------------------------------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------------------------------------------------
 # Syntax Analysis
 # Guided by Cimple's grammar
-# ----------------------------------------------------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------------------------------------------------
 
 def syntax():
     global lex_result, function_flag
@@ -486,7 +486,7 @@ def program():
             program_name = lex_result[1]  # save the program's name
             lex_result = lex()  # search for next token
 
-            genquad("begin_block", program_name, "_", "_")
+            #genquad("begin_block", program_name, "_", "_")
             block(program_name)
 
             if (lex_result[0] == 'EOF symbol'):
@@ -514,7 +514,11 @@ def block(name):
     # check if there are subprograms
     subprograms()
 
-    if((name == "null") or (name == program_name)):
+    if(name == "null"):
+        # check if there are statements
+        statements()
+    elif(name == program_name):
+        genquad("begin_block", name, "_", "_")
         # check if there are statements
         statements()
     else:
@@ -713,6 +717,7 @@ def statements():
             lex_result = lex()  # search for next token
 
             return
+
         elif (lex_result[0] == 'EOF symbol'):
             return
         else:
@@ -770,12 +775,15 @@ def assignment_stat():
     global lex_result, file_line
 
     if (lex_result[0] == 'id'):
+        id = lex_result[1]
         lex_result = lex()  # search for next token
 
         if (lex_result[0] == 'declaration'):
             lex_result = lex()  # search for next token
 
-            expression()
+            # S -> id := E {P1}
+            E_place = expression()
+            genquad(":=", E_place, "_", id)
 
             return
         else:
@@ -795,13 +803,25 @@ def if_stat():
         if (lex_result[0] == 'left parethensis'):
             lex_result = lex()  # search for next token
 
-            condition()
+            # S -> if B then {P1} S1 {P2} TAIL {P3}
+            B_list = condition()  # B_list[0] = B.true and B_list[1] = B.false
 
             if (lex_result[0] == 'right parethensis'):
                 lex_result = lex()  # search for next token
+                # {P1}
+                backpatch(B_list[0], nextquad())
 
-                statements()
-                elsepart()
+                statements()  # S1
+
+                # {P2}
+                ifList = makelist(nextquad())
+                genquad("jump", "_", "_", "_")
+                backpatch(B_list[1], nextquad())
+
+                elsepart()  # TAIL
+                # {P3}
+                backpatch(ifList, nextquad())
+
                 return
 
             else:
@@ -816,11 +836,12 @@ def if_stat():
 def elsepart():
     global lex_result
 
+    # TAIL -> else S2| TAIL -> e
     if (lex_result[0] == 'else'):
         # else token detected
         lex_result = lex()  # search for next token
 
-        statements()
+        statements()  # S2
 
     return
 
@@ -829,17 +850,26 @@ def elsepart():
 def while_stat():
     global lex_result, file_line
 
+    # S -> while {P1} B do {P2} S1 {P3}
     if (lex_result[0] == 'while'):
         lex_result = lex()  # search for next token
+        # {P1}
+        B_quad = nextquad()
 
         if (lex_result[0] == 'left parethensis'):
             lex_result = lex()  # search for next token
-            condition()
+
+            B_list = condition()  # B_list[0] = B.true and B_list[1] = B.false
 
             if (lex_result[0] == 'right parethensis'):
                 lex_result = lex()  # search for next token
+                # {P2}
+                backpatch(B_list[0], nextquad())
 
-                statements()
+                statements()  # S1
+                # {P3}
+                genquad("jump", "_", "_", B_quad)
+                backpatch(B_list[1], nextquad())
 
                 return
             else:
@@ -854,9 +884,15 @@ def while_stat():
 def switchcase_stat():
     global lex_result, file_line
 
+    # S -> switch {P1}
+    #   ((cond): {P2} S1 break {P3})*
+    #   default: S2 {P4}
+
     if (lex_result[0] == 'switchcase'):
         # switchcase token detected
         lex_result = lex()  # search for next token
+        # {P1}:
+        exitlist = emptylist()
 
         while (lex_result[0] == 'case'):
             # case token detected
@@ -865,12 +901,20 @@ def switchcase_stat():
             if (lex_result[0] == 'left parethensis'):
                 lex_result = lex()  # search for next token
 
-                condition()
+                cond_list = condition()  # cond_list[0] = cond.true and cond_list[1] = cond.false
 
                 if (lex_result[0] == 'right parethensis'):
                     lex_result = lex()  # search for next token
 
+                    # {P2}:
+                    backpatch(cond_list[0], nextquad())
                     statements()
+
+                    # {P3}:
+                    e = makelist(nextquad())
+                    genquad("jump", "_", "_", "_")
+                    exitlist = merge(exitlist, e)
+                    backpatch(cond_list[1], nextquad())
 
                 else:
                     printError("Right parethensis was not detected after 'switchcase' statement", file_line)
@@ -883,6 +927,10 @@ def switchcase_stat():
             lex_result = lex()  # search for next token
 
             statements()
+
+            # {P4}:
+            backpatch(exitlist, nextquad())
+
             return
         else:
             printError("'default' statement was not detected after 'switchcase' statement ", file_line)
@@ -894,9 +942,19 @@ def switchcase_stat():
 def forcase_stat():
     global lex_result, file_line
 
+
+    # forcase {P1}
+    #       ( when (condition) do {P2}
+    #            sequence {P3}
+    #            end do )*
+    # endforcase
+
     if (lex_result[0] == 'forcase'):
         # forcase token detected
         lex_result = lex()  # search for next token
+
+        # {P1}:
+        p1quad = nextquad()
 
         while (lex_result[0] == 'case'):
             lex_result = lex()  # search for next token
@@ -904,13 +962,17 @@ def forcase_stat():
             if (lex_result[0] == 'left parethensis'):
                 lex_result = lex()  # search for next token
 
-                condition()
+                cond_list = condition()  # cond_list[0] = cond.true and cond_list[1] = cond.false
 
                 if (lex_result[0] == 'right parethensis'):
                     lex_result = lex()  # search for next token
 
+                    # {P2}:
+                    backpatch(cond_list[0], nextquad())
                     statements()
-
+                    # {P3}:
+                    genquad("jump", "_", "_", p1quad)
+                    backpatch(cond_list[1], nextquad())
                 else:
                     printError("Right parethensis was not detected after 'forcase' statement", file_line)
 
@@ -922,6 +984,7 @@ def forcase_stat():
             lex_result = lex()  # search for next token
 
             statements()
+
             return
         else:
             printError("'default' statement was not detected after 'forcase' statement ", file_line)
@@ -932,9 +995,20 @@ def forcase_stat():
 # incase statement
 def incase_stat():
     global lex_result, file_line
+    w = 0
+    p1quad = ""
+    # incase {P1}
+    #       ( when (condition) do {P2}
+    #            sequence {P3}
+    #            end do )*
+    # endincase {P4}
 
     if (lex_result[0] == 'incase'):
         # incase token detected
+        # {P1}:
+        w = newtemp()
+        p1quad = nextquad()
+        genquad(":=", 1, "_", w)
         lex_result = lex()  # search for next token
 
         while (lex_result[0] == 'case'):
@@ -944,13 +1018,17 @@ def incase_stat():
             if (lex_result[0] == 'left parethensis'):
                 lex_result = lex()  # search for next token
 
-                condition()
+                cond_list = condition()  # cond_list[0] = cond.true and cond_list[1] = cond.false
 
                 if (lex_result[0] == 'right parethensis'):
                     lex_result = lex()  # search for next token
 
+                    # {P2}:
+                    backpatch(cond_list[0], nextquad())
+                    genquad(":=", 0, "_", w)
                     statements()
-
+                    # {P3}:
+                    backpatch(cond_list[1], nextquad())
                 else:
                     printError("Right parethensis was not detected after 'incase' statement", file_line)
             else:
@@ -958,6 +1036,8 @@ def incase_stat():
 
     else:
         printError("'incase' statement was not detected", file_line)
+    # {P4}:
+    genquad(":=", w, 0, p1quad)
     return
 
 
@@ -972,11 +1052,13 @@ def return_stat():
         if (lex_result[0] == 'left parethensis'):
             lex_result = lex()  # search for next token
 
-            expression()
+            # S -> return (E) {P1}
+            E_place = expression()
 
             if (lex_result[0] == 'right parethensis'):
                 lex_result = lex()  # search for next token
 
+                genquad("retv", E_place, "_", "_")
                 return
             else:
                 printError("Right parethensis was not detected after 'return' statement", file_line)
@@ -1029,12 +1111,14 @@ def print_stat():
 
         if (lex_result[0] == 'left parethensis'):
             lex_result = lex()  # search for next token
+            # S -> print (E) {P1}
 
-            expression()
+            E_place = expression()
 
             if (lex_result[0] == 'right parethensis'):
                 lex_result = lex()  # search for next token
 
+                genquad("out", E_place, "_", "_")
             else:
                 printError("Right parethensis was not detected after 'print' statement", file_line)
         else:
@@ -1054,12 +1138,16 @@ def input_stat():
 
         if (lex_result[0] == 'left parethensis'):
             lex_result = lex()  # search for next token
+            # S -> input (id) {P1}
 
             if (lex_result[0] == 'id'):
+                id_place = lex_result[1]
                 lex_result = lex()  # search for next token
 
                 if (lex_result[0] == 'right parethensis'):
                     lex_result = lex()  # search for next token
+
+                    genquad("inp", id_place, "_", "_")
                     return
 
                 else:
@@ -1094,14 +1182,17 @@ def actualparitem():
         # in token detected
         lex_result = lex()  # search for next token
 
-        expression()
+        a_place = expression()  # in a
+        genquad("par", a_place, "CV", "_")
 
     elif (lex_result[0] == 'inout'):
         # inout token detected
         lex_result = lex()  # search for next token
 
         if (lex_result[0] == 'id'):
+            b_place = lex_result[1] # inout b
             lex_result = lex()  # search for next token
+            genquad("par", b_place, "REF", "_")
 
         else:
             printError("Actualparitem: Value name was not detected after 'inout' statement", file_line)
@@ -1374,9 +1465,9 @@ syntax()
 file.close()
 
 
-# ----------------------------------------------------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------------------------------------------------
 # C file handling
-# ----------------------------------------------------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------------------------------------------------
 def c_file_create():
     global program_name
 
@@ -1388,10 +1479,10 @@ def c_file_create():
     for i in quad_list:
         if(quad_list[i][0] == ":="):  # detected a variable
             variables.append(quad_list[i][3])  # add it to the list
-            variable_string += quad_list[i][3] + ","  # convert the list to a string
+            variable_string += str(quad_list[i][3]) + ","  # convert the list to a string
 
     # for i in variables:
-    #    variable_string += variables[i] + ","  # convert the list to a string
+    #    variable_string += str(variables[i]) + ","  # convert the list to a string
 
     variable_string = variable_string[:-1] + ";"  # replace the last "," with ";"
 
@@ -1452,9 +1543,9 @@ def c_file_create():
     c_file.close()  # the file is completed
 
 
-# ----------------------------------------------------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------------------------------------------------
 # int file handling
-# ----------------------------------------------------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------------------------------------------------
 def int_file_create():
     global program_name
 
