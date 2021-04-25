@@ -1,4 +1,4 @@
-# Todri Aggelos, AM:3090, username:cse53090
+# Todhri Angjelo, AM:3090, username:cse53090
 # Mpoulotis Panagiotis, AM:4271, username:cse74271
 
 # Disclaimer: The code still needs some adjustments as it's currently in debugging state
@@ -78,6 +78,7 @@ reserved = ['program', 'declare', 'if', 'else',
 quad_num = 0  # the number of quads created
 quad_list = []  # the list of all quads
 T_value = 0  # the number of the temporary variable used in "T_<T_value>"
+T_value_list = []  # a list with all T_values
 program_name = ""
 # name = ""  # the name of a procedure or function
 function_flag = False  # true if there are functions/procedures in the cimple code.
@@ -105,11 +106,11 @@ def genquad(op, x, y, z):
 
 # Creates and returns T_<T_value>
 def newtemp():
-    global T_value
+    global T_value, T_value_list
 
     temp = "T_" + str(T_value)  # temp is now "T_<T_value>" for example "T_1" or "T_2"
     T_value += 1  # a new temporary variable has been created so +1 to the total number of temporary variables
-
+    T_value_list.append(temp)
     return temp
 
 
@@ -130,6 +131,7 @@ def makelist(x):
 
 # Merges two lists
 def merge(list1, list2):
+    merged = []
     merged = list1 + list2
 
     return merged
@@ -434,12 +436,13 @@ def lex():
 # C file handling
 # ----------------------------------------------------------------------------------------------------------------------
 def c_file_create():
-    global program_name, quad_list, quad_num
+    global program_name, quad_list, quad_num , T_value_list, T_value
 
     variables = []  # the variables declared in the program
     variable_string = ""  # will be used for printing the variables
     relops = ["=", ">", "<", "<>", ">=", "<="]   # all the =,>,<,<>,>=,<= symbols
     relop_id = ""  # this wil be used in its respective file.write()
+    temp_string = ""
 
     for i in range(quad_num):
         if(quad_list[i][0] == ":="):  # detected a variable
@@ -449,10 +452,21 @@ def c_file_create():
 
     variable_string = variable_string[:-1] + ";"  # replace the last "," with ";"
 
+    for i in range(T_value):
+        temp_string += str(T_value_list[i]) + ","
+
+    temp_string = temp_string[:-1] + ";" # replace the last "," with ";"
+
+    variable_string = variable_string[:-1] + ";"  # replace the last "," with ";"
     c_file = open(program_name + '.c', 'w')  # creates the .c file
     c_file.write("#include <stdio.h> \t// for the printf and scanf functions \n")  # will be need for the functions used
     c_file.write("int main() \n" + "{\n")
-    c_file.write("\t" + "int " + variable_string + "\n")  # writes all the variables declared
+
+    if(len(variables) != 0):
+        c_file.write("\t" + "int " + variable_string + "\n")  # writes all the variables declared
+
+    if(len(T_value_list) != 0):
+        c_file.write("\t" + "int " + temp_string + "\n")  # writes all the variables declared
 
     for i in range(quad_num):
         # declaration statement
@@ -555,8 +569,8 @@ def program():
 
             if (lex_result[0] == 'EOF symbol'):
                 # End of file reached
-                genquad("halt", "_", "_", "_")
-                genquad("end_block", program_name, "_", "_")
+                #genquad("halt", "_", "_", "_")
+                #genquad("end_block", program_name, "_", "_")
                 return
 
             else:
@@ -577,19 +591,18 @@ def block(name):
 
     # check if there are subprograms
     subprograms()
+    if(name != "null"):
+        genquad("begin_block", name, "_", "_")
 
-    if(name == "null"):
+    if(name != program_name ):
         # check if there are statements
         statements()
-    elif(name == program_name):
-        genquad("begin_block", name, "_", "_")
-        # check if there are statements
-        statements()
+
     else:
-        genquad("begin_block", name, "_", "_")
         # check if there are statements
         statements()
-        genquad("end_block", name, "_", "_")
+        genquad("halt", "_", "_", "_")
+        genquad("end_block", program_name, "_", "_")
 
 
 # declaration of variables , zero or more " declare " allowed
@@ -606,8 +619,8 @@ def declarations():
         if (lex_result[0] == 'question mark'):
             lex_result = lex()  # search for next token
 
-            name = "null"
-            block(name)  # go back to block() to check the other functions
+            # name = "null"
+            # block(name)  # go back to block() to check the other functions
 
         else:
             printError("Declarations: ';' character was not detected", file_line)
@@ -670,8 +683,9 @@ def subprogram():
                 if (lex_result[0] == 'right parethensis'):
 
                     lex_result = lex()  # search for next token  # search for next token
-
+                    #genquad("begin_block", name, "_", "_")
                     block(name)  # go back to block() to check the other functions
+                    genquad("end_block", name, "_", "_")
 
                     return
                 else:
@@ -699,8 +713,9 @@ def subprogram():
 
                 if (lex_result[0] == 'right parethensis'):
                     lex_result = lex()  # search for next token
-
+                    #genquad("begin_block", name, "_", "_")
                     block(name)  # go back to block() to check the other functions
+                    genquad("end_block", name, "_", "_")
 
                     return
 
@@ -1151,9 +1166,9 @@ def call_stat():
                 if (lex_result[0] == 'right parethensis'):
                     lex_result = lex()  # search for next token
 
-                    if (name in function_list):  # we are calling a function
-                        w = newtemp()
-                        genquad("par", w, "RET", "_")
+                    #if (name in function_list):  # we are calling a function
+                    #    w = newtemp()
+                    #    genquad("par", w, "RET", "_")
 
                     genquad("call", name, "_", "_")  # this is needed for both procedure or function
 
@@ -1303,6 +1318,9 @@ def boolterm():
     # {P1}:
     R1_list = boolfactor()
 
+    Q_true = []
+    Q_false = []
+
     Q_true = R1_list[0]  # Q.true = R1.true
     Q_false = R1_list[1]  # Q.false = R1.false
 
@@ -1311,8 +1329,8 @@ def boolterm():
         backpatch(Q_true, nextquad())
         lex_result = lex()  # search for next token
 
+        R2_list = boolfactor()  # R2
         # {P3}:
-        R2_list = boolfactor()
         Q_false = merge(Q_false, R2_list[1])
         Q_true = R2_list[0]
 
@@ -1459,14 +1477,14 @@ def factor():
     elif (lex_result[0] == 'id'):
         F_place = lex_result[1]  # F.place = id.place
 
-        idtail()
+        idtail(F_place)
         return F_place
     else:
         printError("Factor: Number value or variable name was expected ", file_line)
 
 
 # follows a function of procedure ( parethensis and parameters )
-def idtail():
+def idtail(func_name):
     global lex_result, file_line
 
     lex_result = lex()  # search for next token
@@ -1476,9 +1494,14 @@ def idtail():
 
         actualparlist()
 
+        w = newtemp()
+        genquad("par", w, "RET", "_")
+        genquad("call", func_name, "_", "_")  # we are calling a function
+
         if (lex_result[0] == 'right parethensis'):
             lex_result = lex()  # search for next token
-
+        else:
+            printError("Right parethensis was not detected", file_line)
     return
 
 
