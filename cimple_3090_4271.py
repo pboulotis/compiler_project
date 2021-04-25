@@ -41,18 +41,6 @@ cmt_symbol = '#'
 # White character symbols
 white_characters = [' ', '\t', '\n']
 
-'''
-# All acceptable characters
-acc_chars = ['A','B','C','D','E','F','G','H','I','J','K','L','M','N','O','P','Q','R','S','T','U','V','W','X','Y','Z',
-                        'a','b','c','d','e','f','g','h','i','j','k','l','m','n','o','p','q','r','s','t','u','v','w','x','y','z',
-                        '0','1','2','3','4','5','6','7','8','9',
-                        '+', '-', '*', '/','=',
-                        '>','<','<=','>=','<>',':',
-                        ':=','(',')','{','}','[',']',
-                        ',','.','#',';',
-                        ' ','\t','\n']
-'''
-
 # States for Lexical Analysis
 start_state = 0
 word_state = 1
@@ -94,13 +82,14 @@ program_name = ""
 # name = ""  # the name of a procedure or function
 function_flag = False  # true if there are functions/procedures in the cimple code.
 # If there are, we don't need to create a C file
-m_label = ""  # this value is given CV,REF,RET depending on the function's parameter
+function_list = []  # a list with the ids of the program's functions
 
 
 # Returns the number of the next quad to be created
 def nextquad():
     global quad_num
 
+    # The number of total quads is increased by 1 from genquad so we just have to return it
     return quad_num
 
 
@@ -112,7 +101,6 @@ def genquad(op, x, y, z):
 
     quad_list.append(quad)  # append the list created to the list of all the quads
     quad_num += 1  # a new quad has been created so +1 to the total number of quads
-    print(quad)
 
 
 # Creates and returns T_<T_value>
@@ -151,7 +139,7 @@ def merge(list1, list2):
 def backpatch(list_given, z):  # list is a close resemblance to list(), so we named it list_given
     global quad_list, quad_num
 
-    for i in range(quad_num-1):  # we want to start from 0, not 1
+    for i in range(quad_num - 1):  # we want to start from 0, not 1
         if(i in list_given):  # searches the list given to find the number of quad indexed
             quad_list[i][3] = z  # completes the specific quad list by adding the z value
 
@@ -442,13 +430,89 @@ def lex():
     return result
 
 
-''' Testing the lexical analysis
-while(1):
-        lexres = lex()
-        if (lexres[0] == "EOF symbol"):
-                break
-        print(lexres)
-'''
+# ----------------------------------------------------------------------------------------------------------------------
+# C file handling
+# ----------------------------------------------------------------------------------------------------------------------
+def c_file_create():
+    global program_name, quad_list, quad_num
+
+    variables = []  # the variables declared in the program
+    variable_string = ""  # will be used for printing the variables
+    relops = ["=", ">", "<", "<>", ">=", "<="]   # all the =,>,<,<>,>=,<= symbols
+    relop_id = ""  # this wil be used in its respective file.write()
+
+    for i in range(quad_num):
+        if(quad_list[i][0] == ":="):  # detected a variable
+            if (quad_list[i][3] not in variables):  # this is a safety measure so there are not any duplicates
+                variables.append(quad_list[i][3])  # add it to the list
+                variable_string += str(quad_list[i][3]) + ","  # convert the list to a string
+
+    variable_string = variable_string[:-1] + ";"  # replace the last "," with ";"
+
+    c_file = open(program_name + '.c', 'w')  # creates the .c file
+    c_file.write("#include <stdio.h> \t// for the printf and scanf functions \n")  # will be need for the functions used
+    c_file.write("int main() \n" + "{\n")
+    c_file.write("\t" + "int " + variable_string + "\n")  # writes all the variables declared
+
+    for i in range(quad_num):
+        # declaration statement
+        if(quad_list[i][0] == ":="):
+            c_file.write("\t" + "L_" + str(i) + ": " + str(quad_list[i][3]) + " = " + str(quad_list[i][1]) + ";" + " //(" + str(quad_list[i]) + ")" + "\n")
+
+        # numerical operation statements
+        elif((quad_list[i][0] == "+") or (quad_list[i][0] == "-") or (quad_list[i][0] == "*") or (quad_list[i][0] == "/")):
+            c_file.write("\t" + "L_" + str(i) + ": " + str(quad_list[i][3]) + " = " + str(quad_list[i][1]) + " " + str(quad_list[i][0]) + " " + str(quad_list[i][2]) + ";" + " //(" + str(quad_list[i]) + ")" + "\n")
+
+        # if statements
+        elif (quad_list[i][0] in relops):
+
+            if(quad_list[i][0] == "="):  # equal in c is ==
+                relop_id = " == "
+            elif(quad_list[i][0] == "<>"):  # not equal in c is !=
+                relop_id = " != "
+            else:
+                relop_id = str(quad_list[i][0])
+            c_file.write("\t" + "L_" + str(i) + ": " + "if (" + str(quad_list[i][1]) + " " + relop_id + " " + str(quad_list[i][2]) + ") goto L_" + str(quad_list[i][3]) + ";" + " //(" + str(quad_list[i]) + ")" + "\n")
+
+        # jump statement
+        elif (quad_list[i][0] == "jump"):
+            c_file.write("\t" + "L_" + str(i) + ": " + "goto L_" + str(quad_list[i][3]) + ";" + " //(" + str(quad_list[i]) + ")" + "\n")
+
+        # end of program
+        elif (quad_list[i][0] == "halt"):
+            c_file.write("\t" + "L_" + str(i) + ": " + "return 0;" + " //(" + str(quad_list[i]) + ")" + "\n")
+
+        # return statement
+        elif (quad_list[i][0] == "retv"):
+            c_file.write("\t" + "L_" + str(i) + ": " + "return " + str(quad_list[i][0]) + ";" + " //(" + str(quad_list[i]) + ")" + "\n")
+
+        # input - scanf statement
+        elif (quad_list[i][0] == "inp"):
+            c_file.write("\t" + "L_" + str(i) + ": " + "scanf('%d',&" + str(quad_list[i][1]) + "); //(" + str(quad_list[i]) + ")" + "\n")
+
+        # output - printf statement
+        elif (quad_list[i][0] == "out"):
+            c_file.write("\t" + "L_" + str(i) + ": " + "printf('%d'," + str(quad_list[i][1]) + "); //(" + str(quad_list[i]) + ")" + "\n" )
+
+        else:
+            c_file.write("\t" + "L_" + str(i) + ": " + " //(" + str(quad_list[i]) + ")" + "\n" )
+
+    c_file.write("}")
+    c_file.close()  # the file is completed
+
+
+# ----------------------------------------------------------------------------------------------------------------------
+# int file handling
+# ----------------------------------------------------------------------------------------------------------------------
+def int_file_create():
+    global program_name, quad_list, quad_num
+
+    int_file = open(program_name + '.int', 'w')  # creates the .int file
+
+    for i in range(quad_num):
+        int_file.write(str(i) + ": " + str(quad_list[i][0]) + " " + str(quad_list[i][1]) + " " + str(quad_list[i][2]) + " " + str(quad_list[i][3]) + "\n")
+
+    int_file.close()  # the file is completed
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -465,10 +529,10 @@ def syntax():
 
     print("Syntax Analysis completed successfully")
 
-    # int_file_create()
+    int_file_create()
 
-    # if(function_flag == False):
-    #    c_file_create()
+    if(function_flag == False):
+        c_file_create()
 
     return
 
@@ -566,7 +630,6 @@ def varlist():
                 lex_result = lex()  # search for next token
 
             else:
-
                 printError("Varlist: There's not a variable after the ',' symbol ", file_line)
 
     return
@@ -586,7 +649,7 @@ def subprograms():
 
 # a subprogram is a function or a procedure, followed by parameters and block
 def subprogram():
-    global lex_result, file_line, name
+    global lex_result, file_line, function_list
 
     # Procedure's analysis
     if (lex_result[0] == 'procedure'):
@@ -627,6 +690,7 @@ def subprogram():
             # function's name is given
             name = lex_result[1]  # save the name of the function
             lex_result = lex()  # search for next token
+            function_list.append(name)  # save the name of the function to the list
 
             if (lex_result[0] == 'left parethensis'):
                 lex_result = lex()  # search for next token
@@ -717,7 +781,7 @@ def statements():
             lex_result = lex()  # search for next token
 
             return
-
+        # Even though this elif is not part of Cimple's grammar, we detected an error if this is not included
         elif (lex_result[0] == 'EOF symbol'):
             return
         else:
@@ -942,7 +1006,6 @@ def switchcase_stat():
 def forcase_stat():
     global lex_result, file_line
 
-
     # forcase {P1}
     #       ( when (condition) do {P2}
     #            sequence {P3}
@@ -1069,7 +1132,7 @@ def return_stat():
 
 # call statement
 def call_stat():
-    global lex_result, file_line, function_flag
+    global lex_result, file_line, function_flag, function_list
 
     if (lex_result[0] == 'call'):
         # call token detected
@@ -1077,6 +1140,7 @@ def call_stat():
         function_flag = True
 
         if (lex_result[0] == 'id'):
+            name = lex_result[1]
             lex_result = lex()  # search for next token
 
             if (lex_result[0] == 'left parethensis'):
@@ -1086,6 +1150,12 @@ def call_stat():
 
                 if (lex_result[0] == 'right parethensis'):
                     lex_result = lex()  # search for next token
+
+                    if (name in function_list):  # we are calling a function
+                        w = newtemp()
+                        genquad("par", w, "RET", "_")
+
+                    genquad("call", name, "_", "_")  # this is needed for both procedure or function
 
                     return
                 else:
@@ -1111,8 +1181,8 @@ def print_stat():
 
         if (lex_result[0] == 'left parethensis'):
             lex_result = lex()  # search for next token
-            # S -> print (E) {P1}
 
+            # S -> print (E) {P1}
             E_place = expression()
 
             if (lex_result[0] == 'right parethensis'):
@@ -1465,93 +1535,3 @@ syntax()
 file.close()
 
 
-# ----------------------------------------------------------------------------------------------------------------------
-# C file handling
-# ----------------------------------------------------------------------------------------------------------------------
-def c_file_create():
-    global program_name
-
-    variables = []  # the variables declared in the program
-    variable_string = ""  # will be used for printing the variables
-    relops = rel_symbols.append("=")  # all the =,>,<,<>,>=,<= symbols
-    relop_id = ""  # this wil be used in its respective file.write()
-
-    for i in quad_list:
-        if(quad_list[i][0] == ":="):  # detected a variable
-            variables.append(quad_list[i][3])  # add it to the list
-            variable_string += str(quad_list[i][3]) + ","  # convert the list to a string
-
-    # for i in variables:
-    #    variable_string += str(variables[i]) + ","  # convert the list to a string
-
-    variable_string = variable_string[:-1] + ";"  # replace the last "," with ";"
-
-    c_file = open(program_name + '.c', 'w')  # creates the .c file
-    c_file.write("#include <stdio.h> \t// for the printf and scanf functions \n")  # will be need for the functions used
-    c_file.write("int main() \n" + "{\n")
-    c_file.write("\t" + "int " + variable_string + "\n")  # writes all the variables declared
-
-    for i in quad_list:
-        # first line
-        if(quad_list[i][0] == "begin_block"):
-            c_file.write("\t" + "L_" + str(i) + ":")
-
-        # declaration statement
-        elif(quad_list[i][0] == ":="):
-            c_file.write("\t" + "L_" + str(i) + ":" + str(quad_list[i][3]) + "=" + str(quad_list[i][1]) + ";" + " //(" + str(quad_list[i]) + ")")
-
-        # numerical operation statements
-        elif((quad_list[i][0] == "+") or (quad_list[i][0] == "-") or (quad_list[i][0] == "*") or (quad_list[i][0] == "/")):
-            c_file.write("\t" + "L_" + str(i) + ":" + str(quad_list[i][3]) + "=" + str(quad_list[i][1]) + str(quad_list[i][0]) + str(quad_list[i][2]) + ";" + " //(" + str(quad_list[i]) + ")")
-
-        # if statements
-        elif (quad_list[i][0] in relops):
-
-            if(quad_list[i][0] == "="):  # equal in c is ==
-                relop_id = "=="
-            elif(quad_list[i][0] == "<>"):  # not equal in c is !=
-                relop_id = "!="
-            else:
-                relop_id = str(quad_list[i][0])
-            c_file.write("\t" + "L_" + str(i) + ":" + "if (" + str(quad_list[i][1]) + relop_id + str(quad_list[i][2]) + ") goto L_" + str(quad_list[i][3]) + ";" + " //(" + str(quad_list[i]) + ")")
-
-        # jump statement
-        elif (quad_list[i][0] == "jump"):
-            c_file.write("\t" + "L_" + str(i) + ":" + "goto L_" + str(quad_list[i][3]) + ";" + " //(" + str(quad_list[i]) + ")")
-
-        # end of program
-        elif (quad_list[i][0] == "halt"):
-            c_file.write("\t" + "L_" + str(i) + ":" + "return 0;" + " //(" + str(quad_list[i]) + ")")
-
-        # return statement
-        elif (quad_list[i][0] == "retv"):
-            c_file.write("\t" + "L_" + str(i) + ":" + "return " + str(quad_list[i][0]) + ";" + " //(" + str(quad_list[i]) + ")")
-
-        # input - scanf statement
-        elif (quad_list[i][0] == "inp"):
-            c_file.write("\t" + "L_" + str(i) + ":" + "scanf(%d,&" + str(quad_list[i][1]) + "); //(" + str(quad_list[i]) + ")")
-
-        # output - printf statement
-        elif (quad_list[i][0] == "out"):
-            c_file.write("\t" + "L_" + str(i) + ":" + "printf(%d," + str(quad_list[i][1]) + "); //(" + str(quad_list[i]) + ")")
-
-        else:
-            print("Something went wrong with the creation of the C file")
-            sys.exit()
-
-    c_file.write("}")
-    c_file.close()  # the file is completed
-
-
-# ----------------------------------------------------------------------------------------------------------------------
-# int file handling
-# ----------------------------------------------------------------------------------------------------------------------
-def int_file_create():
-    global program_name
-
-    int_file = open(program_name + '.int', 'w')  # creates the .int file
-
-    for i in quad_list:
-        int_file.write(str(i) + ": " + str(quad_list[i][0]) + " " + str(quad_list[i][1]) + " " + str(quad_list[i][2]) + " " + str(quad_list[i][3]))
-
-    int_file.close()  # the file is completed
