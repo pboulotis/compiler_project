@@ -1,8 +1,6 @@
 # Todhri Angjelo, AM:3090, username:cse53090
 # Mpoulotis Panagiotis, AM:4271, username:cse74271
 
-# Disclaimer: The code still needs some adjustments as it's currently in debugging state
-# So this will be modified in later phases
 
 import sys  # needed for reading the test files
 import string  # for some library uses
@@ -55,14 +53,14 @@ EOF_state = 8
 lex_states = [start_state, word_state, digit_state, lesser_than_state, greater_than_state, colon_state,
               comment_state, final_state, EOF_state]
 
-# Errors
+# Lex errors
 
 Error_non_valid_symbol = "Non-valid symbol detected"
 Error_letter_after_digit = "There's an alphabetic character after a numerical digit"
 Error_colon = "There isn't a = after the : symbol  "
 Error_out_of_bounds = "There's an out-of-bounds number "
 Error_string_length = "There's a string with more than 30 characters "
-Error_brackets = "The EOF has been detected while a bracket is open"
+Error_comments = "The EOF has been detected while a comment is open"
 
 # All the reserved words Cimple implements
 reserved = ['program', 'declare', 'if', 'else',
@@ -79,11 +77,11 @@ quad_num = 0  # the number of quads created
 quad_list = []  # the list of all quads
 T_value = 0  # the number of the temporary variable used in "T_<T_value>"
 T_value_list = []  # a list with all T_values
-program_name = ""
-# name = ""  # the name of a procedure or function
+program_name = ""  # the name of the program, will be needed for .c and .int files as well as the block(name) function
 function_flag = False  # true if there are functions/procedures in the cimple code.
 # If there are, we don't need to create a C file
 function_list = []  # a list with the ids of the program's functions
+procedure_list = []  # same, but for procedures
 
 
 # Returns the number of the next quad to be created
@@ -131,7 +129,6 @@ def makelist(x):
 
 # Merges two lists
 def merge(list1, list2):
-    merged = []
     merged = list1 + list2
 
     return merged
@@ -319,12 +316,12 @@ def lex():
                 token_type = "EOF symbol"
                 token_string += char
 
-                # Unacceptable characters
+            # Unacceptable characters
             else:
                 print(char)
                 printError(Error_non_valid_symbol, file_line)
 
-                # word state analysis
+        # word state analysis
         elif (state == word_state):
             if (char in letters or char in digits):
                 prod_word += char
@@ -400,19 +397,20 @@ def lex():
                 token_type = "hashtag2"
                 token_string = ''
             elif (char == '.'):
-                printError(Error_brackets, file_line)
+                printError(Error_comments, file_line)
             else:
                 state = comment_state
 
         # EOF state analysis
         elif (state == EOF_state):
             # We want to detect if there are characters after the EOF symbols has been detected
-            # If there are the following warning message will be displayed
+            # If there are, the following warning message will be displayed
             file_pos += 1
             file.seek(file_pos)
             char = file.read(1)
             if (char):
-                print("Warning: There's code after the EOF symbol was detected")
+                if (char not in white_characters):
+                    print("Warning: There's code after the EOF symbol was detected")
             state = final_state
 
     # If we reached this state, then a token has been detected
@@ -436,13 +434,13 @@ def lex():
 # C file handling
 # ----------------------------------------------------------------------------------------------------------------------
 def c_file_create():
-    global program_name, quad_list, quad_num , T_value_list, T_value
+    global program_name, quad_list, quad_num, T_value_list, T_value
 
     variables = []  # the variables declared in the program
     variable_string = ""  # will be used for printing the variables
     relops = ["=", ">", "<", "<>", ">=", "<="]   # all the =,>,<,<>,>=,<= symbols
     relop_id = ""  # this wil be used in its respective file.write()
-    temp_string = ""
+    temp_string = ""  # will be used for printing the temporary variables
 
     for i in range(quad_num):
         if(quad_list[i][0] == ":="):  # detected a variable
@@ -455,61 +453,70 @@ def c_file_create():
     for i in range(T_value):
         temp_string += str(T_value_list[i]) + ","
 
-    temp_string = temp_string[:-1] + ";" # replace the last "," with ";"
+    temp_string = temp_string[:-1] + ";"  # replace the last "," with ";"
 
     variable_string = variable_string[:-1] + ";"  # replace the last "," with ";"
     c_file = open(program_name + '.c', 'w')  # creates the .c file
     c_file.write("#include <stdio.h> \t// for the printf and scanf functions \n")  # will be need for the functions used
+    c_file.write("\n \n")
     c_file.write("int main() \n" + "{\n")
 
     if(len(variables) != 0):
         c_file.write("\t" + "int " + variable_string + "\n")  # writes all the variables declared
 
     if(len(T_value_list) != 0):
-        c_file.write("\t" + "int " + temp_string + "\n")  # writes all the variables declared
+        c_file.write("\t" + "int " + temp_string + "\n \n")  # writes all the variables declared
 
     for i in range(quad_num):
         # declaration statement
         if(quad_list[i][0] == ":="):
-            c_file.write("\t" + "L_" + str(i) + ": " + str(quad_list[i][3]) + " = " + str(quad_list[i][1]) + ";" + " //(" + str(quad_list[i]) + ")" + "\n")
+            c_file.write("\t" + "L_" + str(i) + ": " + str(quad_list[i][3]) + " = " + str(quad_list[i][1]) + ";")
+            c_file.write(" //(" + str(quad_list[i]) + ")" + "\n")
 
         # numerical operation statements
         elif((quad_list[i][0] == "+") or (quad_list[i][0] == "-") or (quad_list[i][0] == "*") or (quad_list[i][0] == "/")):
-            c_file.write("\t" + "L_" + str(i) + ": " + str(quad_list[i][3]) + " = " + str(quad_list[i][1]) + " " + str(quad_list[i][0]) + " " + str(quad_list[i][2]) + ";" + " //(" + str(quad_list[i]) + ")" + "\n")
+            c_file.write("\t" + "L_" + str(i) + ": " + str(quad_list[i][3]) + " = " + str(quad_list[i][1]) + " " + str(quad_list[i][0]) + " " + str(quad_list[i][2]) + ";")
+            c_file.write(" //(" + str(quad_list[i]) + ")" + "\n")
 
         # if statements
         elif (quad_list[i][0] in relops):
 
             if(quad_list[i][0] == "="):  # equal in c is ==
-                relop_id = " == "
+                relop_id = "=="
             elif(quad_list[i][0] == "<>"):  # not equal in c is !=
-                relop_id = " != "
+                relop_id = "!="
             else:
                 relop_id = str(quad_list[i][0])
-            c_file.write("\t" + "L_" + str(i) + ": " + "if (" + str(quad_list[i][1]) + " " + relop_id + " " + str(quad_list[i][2]) + ") goto L_" + str(quad_list[i][3]) + ";" + " //(" + str(quad_list[i]) + ")" + "\n")
+            c_file.write("\t" + "L_" + str(i) + ": " + "if (" + str(quad_list[i][1]) + " " + relop_id + " " + str(quad_list[i][2]) + ") goto L_" + str(quad_list[i][3]) + ";")
+            c_file.write(" //(" + str(quad_list[i]) + ")" + "\n")
 
         # jump statement
         elif (quad_list[i][0] == "jump"):
-            c_file.write("\t" + "L_" + str(i) + ": " + "goto L_" + str(quad_list[i][3]) + ";" + " //(" + str(quad_list[i]) + ")" + "\n")
+            c_file.write("\t" + "L_" + str(i) + ": " + "goto L_" + str(quad_list[i][3]) + ";")
+            c_file.write(" //(" + str(quad_list[i]) + ")" + "\n")
 
         # end of program
         elif (quad_list[i][0] == "halt"):
-            c_file.write("\t" + "L_" + str(i) + ": " + "return 0;" + " //(" + str(quad_list[i]) + ")" + "\n")
+            c_file.write("\t" + "L_" + str(i) + ": " + "return 0;")
+            c_file.write(" //(" + str(quad_list[i]) + ")" + "\n")
 
         # return statement
         elif (quad_list[i][0] == "retv"):
-            c_file.write("\t" + "L_" + str(i) + ": " + "return " + str(quad_list[i][0]) + ";" + " //(" + str(quad_list[i]) + ")" + "\n")
+            c_file.write("\t" + "L_" + str(i) + ": " + "return " + str(quad_list[i][0]) + ";")
+            c_file.write(" //(" + str(quad_list[i]) + ")" + "\n")
 
         # input - scanf statement
         elif (quad_list[i][0] == "inp"):
-            c_file.write("\t" + "L_" + str(i) + ": " + "scanf('%d',&" + str(quad_list[i][1]) + "); //(" + str(quad_list[i]) + ")" + "\n")
+            c_file.write("\t" + "L_" + str(i) + ": " + "scanf('%d',&" + str(quad_list[i][1]) + ");")
+            c_file.write(" //(" + str(quad_list[i]) + ")" + "\n")
 
         # output - printf statement
         elif (quad_list[i][0] == "out"):
-            c_file.write("\t" + "L_" + str(i) + ": " + "printf('%d'," + str(quad_list[i][1]) + "); //(" + str(quad_list[i]) + ")" + "\n" )
+            c_file.write("\t" + "L_" + str(i) + ": " + "printf('%d'," + str(quad_list[i][1]) + ");")
+            c_file.write(" //(" + str(quad_list[i]) + ")" + "\n")
 
         else:
-            c_file.write("\t" + "L_" + str(i) + ": " + " //(" + str(quad_list[i]) + ")" + "\n" )
+            c_file.write("\t" + "L_" + str(i) + ":" + "\t" + "//(" + str(quad_list[i]) + ")" + "\n")
 
     c_file.write("}")
     c_file.close()  # the file is completed
@@ -545,7 +552,7 @@ def syntax():
 
     int_file_create()
 
-    if(function_flag == False):
+    if(function_flag is False):  # if we don't have any functions or procedures we can create the C file
         c_file_create()
 
     return
@@ -564,13 +571,11 @@ def program():
             program_name = lex_result[1]  # save the program's name
             lex_result = lex()  # search for next token
 
-            #genquad("begin_block", program_name, "_", "_")
             block(program_name)
 
             if (lex_result[0] == 'EOF symbol'):
                 # End of file reached
-                #genquad("halt", "_", "_", "_")
-                #genquad("end_block", program_name, "_", "_")
+               
                 return
 
             else:
@@ -591,13 +596,11 @@ def block(name):
 
     # check if there are subprograms
     subprograms()
-    if(name != "null"):
-        genquad("begin_block", name, "_", "_")
+    genquad("begin_block", name, "_", "_")
 
-    if(name != program_name ):
+    if(name != program_name):
         # check if there are statements
         statements()
-
     else:
         # check if there are statements
         statements()
@@ -607,7 +610,7 @@ def block(name):
 
 # declaration of variables , zero or more " declare " allowed
 def declarations():
-    global lex_result, file_line, name
+    global lex_result, file_line
 
     while (lex_result[0] == 'declare'):
         # declare token detected
@@ -618,9 +621,6 @@ def declarations():
 
         if (lex_result[0] == 'question mark'):
             lex_result = lex()  # search for next token
-
-            # name = "null"
-            # block(name)  # go back to block() to check the other functions
 
         else:
             printError("Declarations: ';' character was not detected", file_line)
@@ -662,7 +662,7 @@ def subprograms():
 
 # a subprogram is a function or a procedure, followed by parameters and block
 def subprogram():
-    global lex_result, file_line, function_list
+    global lex_result, file_line, function_list, procedure_list
 
     # Procedure's analysis
     if (lex_result[0] == 'procedure'):
@@ -683,7 +683,7 @@ def subprogram():
                 if (lex_result[0] == 'right parethensis'):
 
                     lex_result = lex()  # search for next token  # search for next token
-                    #genquad("begin_block", name, "_", "_")
+
                     block(name)  # go back to block() to check the other functions
                     genquad("end_block", name, "_", "_")
 
@@ -713,7 +713,7 @@ def subprogram():
 
                 if (lex_result[0] == 'right parethensis'):
                     lex_result = lex()  # search for next token
-                    #genquad("begin_block", name, "_", "_")
+
                     block(name)  # go back to block() to check the other functions
                     genquad("end_block", name, "_", "_")
 
@@ -796,9 +796,6 @@ def statements():
             lex_result = lex()  # search for next token
 
             return
-        # Even though this elif is not part of Cimple's grammar, we detected an error if this is not included
-        elif (lex_result[0] == 'EOF symbol'):
-            return
         else:
             printError("Statements: ';' character wasn't detected after statement", file_line)
 
@@ -853,16 +850,17 @@ def statement():
 def assignment_stat():
     global lex_result, file_line
 
+    # S -> id := E {P1}
     if (lex_result[0] == 'id'):
-        id = lex_result[1]
+        id_place = lex_result[1]
         lex_result = lex()  # search for next token
 
         if (lex_result[0] == 'declaration'):
             lex_result = lex()  # search for next token
 
-            # S -> id := E {P1}
-            E_place = expression()
-            genquad(":=", E_place, "_", id)
+            E_place = expression()  # E
+
+            genquad(":=", E_place, "_", id_place)  # {P1}
 
             return
         else:
@@ -1147,7 +1145,7 @@ def return_stat():
 
 # call statement
 def call_stat():
-    global lex_result, file_line, function_flag, function_list
+    global lex_result, file_line, function_flag
 
     if (lex_result[0] == 'call'):
         # call token detected
@@ -1165,10 +1163,6 @@ def call_stat():
 
                 if (lex_result[0] == 'right parethensis'):
                     lex_result = lex()  # search for next token
-
-                    #if (name in function_list):  # we are calling a function
-                    #    w = newtemp()
-                    #    genquad("par", w, "RET", "_")
 
                     genquad("call", name, "_", "_")  # this is needed for both procedure or function
 
@@ -1407,10 +1401,14 @@ def boolfactor():
 def expression():
     global lex_result, file_line
 
-    optional_sign()
+    symbol = optional_sign()
 
     # E -> T1 ( + T2 {P1}) * {P2}
     T1_place = term()
+
+    # Checks if T1 is a negative number
+    if(symbol == "-"):
+        T1_place = "-" + T1_place
 
     while (lex_result[0] == 'plus' or lex_result[0] == 'minus'):
         symbol = lex_result[1]
@@ -1556,5 +1554,3 @@ def mul_op():
 syntax()
 # The file is no longer needed so close it
 file.close()
-
-
