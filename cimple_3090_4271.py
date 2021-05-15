@@ -70,6 +70,26 @@ reserved = ['program', 'declare', 'if', 'else',
             'function', 'procedure', 'call', 'return', 'in', 'inout',
             'input', 'print']
 
+
+# ----------------------------------------------------------------------------------------------------------------------
+# File handling
+# ----------------------------------------------------------------------------------------------------------------------
+# Check if a cimple file is not given by the command file_line
+if len(sys.argv) == 1:
+    print("There's not a cimple file given")
+    sys.exit()
+
+# Check if there are more than one cimple files is given by the command file_line
+if len(sys.argv) > 2:
+    print("There are more than one cimple files given")
+    sys.exit()
+
+# Get the Cimple file from the command file_line
+file = open(sys.argv[1], 'r')
+
+file_line = 1  # first line of the file
+
+
 # ----------------------------------------------------------------------------------------------------------------------
 # Functions and variables used for the intermediate code phase
 # ----------------------------------------------------------------------------------------------------------------------
@@ -82,6 +102,7 @@ function_flag = False  # true if there are functions/procedures in the cimple co
 # If there are, we don't need to create a C file
 function_list = []  # a list with the ids of the program's functions
 procedure_list = []  # same, but for procedures
+variables = []
 
 
 # Returns the number of the next quad to be created
@@ -115,7 +136,6 @@ def newtemp():
 # Creates an empty list of quads
 def emptylist():
     empty = []
-
     return empty
 
 
@@ -138,37 +158,268 @@ def merge(list1, list2):
 def backpatch(list_given, z):  # list is a close resemblance to list(), so we named it list_given
     global quad_list, quad_num
 
-    for i in range(quad_num - 1):  # we want to start from 0, not 1
-        if(i in list_given):  # searches the list given to find the number of quad indexed
+    for i in range(quad_num):
+        if i in list_given:  # searches the list given to find the number of quad indexed
             quad_list[i][3] = z  # completes the specific quad list by adding the z value
 
 
 # ----------------------------------------------------------------------------------------------------------------------
-# File handling 
+# Symbol Array variables, classes and functions
 # ----------------------------------------------------------------------------------------------------------------------
-# Check if a cimple file is not given by the command file_line
-if (len(sys.argv) == 1):
-    print("There's not a cimple file given")
+symbol_list = []  # the symbol array in list form
+main_state_flag = False  # this flag let us know whether we are in the main part of the program
+# or in a function or procedure
+procedure_state_flag = False  # likewise for procedures
+return_flag = False  # we have detected a return flag while analysing a function
+
+# We are using classes, because they are the C-equivalent to structs.
+# We need to store multiple strings, integers etc, and using lists would be a complicated process
+# Cimple's syntax does not have the float type, only integers so we don't need to include the int type
+# in the following records-classes
+
+
+# Record Entity
+class Variable:
+    def __init__(self, name, offset):
+        self.name = name
+        self.offset = offset
+
+    def display_entity(self):
+        return "Variable: " + str(self.name) + " with offset: " + str(self.offset)
+
+
+class Function:
+    def __init__(self, name):
+        self.name = name
+        self.start_quad = 0
+        self.argument_list = []
+        self.frame_length = 12
+
+    def display_entity(self):
+        result = "Function: " + str(self.name) + " Starting quad : " + str(self.start_quad)
+        # We need to display the arguments as well
+        result += " Arguments: ("
+        temp = ""
+        for i in self.argument_list:
+            temp = temp + i.display_scope() + ","
+        temp = temp[:-1] + ""  # delete the last ","
+        result += str(temp) + ") Frame_length: " + str(self.frame_length)
+
+        return result
+
+
+# Might not be needed
+class Constant:
+    def __init__(self, name, value):
+        self.name = name
+        self.value = value
+
+    def display_entity(self):
+        return "Constant: " + str(self.name) + " with value: " + str(self.value)
+
+
+class Parameter:
+    def __init__(self, name, parmode, offset):
+        self.name = name
+        self.parmode = parmode
+        self.offset = offset
+
+    def display_entity(self):
+        return "Parameter: " + str(self.name) + " Parmode: " + str(self.parmode) + " Offset: " + str(self.offset)
+
+
+class TempVariable:
+    def __init__(self, name, offset):
+        self.name = name
+        self.offset = offset
+
+    def display_entity(self):
+        return "Temporary variable: " + str(self.name) + " with offset: " + str(self.offset)
+
+
+# Record Scope
+class Scope:
+    def __init__(self, nesting_level):
+        self.entity_list = []
+        self.nesting_level = nesting_level
+        # We added an extra parameter, offset, so we can pass it down
+        # the necessary entities
+        self.offset = 12  # the offset always start at value 12
+
+    def display_scope(self):
+        result = "Nesting level: " + str(self.nesting_level) + "\n"
+        for i in self.entity_list:
+            result = result + i.display_entity()
+            result = result + "\n"
+        result = result + "Scope's offset: " + str(self.offset)
+        return result
+
+
+# Record Argument
+class Argument:
+    def __init__(self, parmode):
+        self.parmode = parmode
+
+    def display_argument(self):
+        return str(self.parmode)
+
+
+def display_symbol_list():
+    print("#-----Symbol Table-----#")
+    for i in symbol_list:
+        print(i.display_scope() + "\n")
+
+
+# Adding a scope to the scope list
+def add_scope(nest_level, ent_list):
+    scope = Scope(nest_level)
+    scope.entity_list = ent_list
+    # we don't have to add the offset yet
+
+    # Nesting level handling
+    if not symbol_list:
+        # The symbol list is empty so we are in nesting level 0
+        scope.nesting_level = 0
+    else:
+        # The nesting level is increased
+        scope.nesting_level += symbol_list[-1].nesting_level + 1
+
+    symbol_list.append(scope)
+    return scope
+
+
+# Deletes the last scope of the symbol list
+def delete_scope():
+    del symbol_list[-1]
+
+
+# Adding an entity to the entity list
+def add_entity(ent_type, name, offset, parmode, ent_list):
+    # Entity - Variable
+    if ent_type == "variable":
+        entity = Variable(name, offset)
+
+    # Entity - Function
+    elif ent_type == "function":
+        entity = Function(name)
+
+    # Entity - Parameter
+    elif ent_type == "parameter":
+        entity = Parameter(name, parmode, offset)
+
+    # Entity - Temp_variable
+    elif ent_type == "temp_var":
+        entity = TempVariable(name, offset)
+
+    # We excluded the constant entity, as it's not being added in the entity list
+    else:
+        print("Incorrect type of entity")
+        sys.exit()
+
+    ent_list.append(entity)
+    return entity
+
+
+# Adding an argument to the argument list of the function
+def add_argument(parmode, argument_list):
+    arg = Argument(parmode)
+    argument_list.append(arg)
+    return arg
+
+
+# Search the entity with the given name
+def search_entity(name):
+    # searching all of the symbol list
+    for i in symbol_list:
+        # searching for the entity in each entity_list of the symbol list
+        for entity in symbol_list[i].entity_list:
+            if entity.name == name:
+                # we found the entity we were searching
+                return entity
+
+    # We didn't find the entity we were searching for
+    print("Could not find an entity with" + name + "name")
     sys.exit()
 
-# Check if there are more than one cimple files is given by the command file_line
-if (len(sys.argv) > 2):
-    print("There are more than one cimple files given")
-    sys.exit()
 
-# Get the Cimple file from the command file_line
-file = open(sys.argv[1], 'r')
+# Checks if we have more than one entities declared with the same name
+def duplicate_check():
+    # We are searching on the current scope, meaning the last of the symbol array
+    scope = symbol_list[-1]
+    duplicates = 0
+    # We are loop the entity list with two different entities to check their names
+    for entity in scope.entity_list:
+        for temp_entity in scope.entity_list:  # loop through the loop again with a different entity
+            if entity.name == temp_entity.name:
+                # We found a duplicate entity
+                duplicates = duplicates + 1
 
-file_line = 1  # first line of the file
+    # We need to know how many duplicates are
+    # If there are more than 1, this means we have an error
+    # If the number is 1, it is logical since the temp_entity and entity both
+    # start looping through the same list
+    return duplicates
+
+
+'''
+# Checks if the id is a function/procedure
+def func_check(id_place):
+    global function_list, procedure_list
+    
+    if id_place in function_list or procedure_list:
+        return True
+    
+    return False
+'''
+
+
+# Checks if the parameters list are the same
+def param_check(func_name, par_list):
+    global file_line, function_list, procedure_list
+    func_entity = search_entity(func_name)
+    func_pars = func_entity.argument_list  # we have the function's argument list that is provided by formalparlist
+
+    if func_name in function_list:
+        # We need to check their length
+        if len(func_pars) < len(par_list):
+            printError("The function '" + func_name + "' requires less arguments ", file_line)
+
+        elif len(func_pars) > len(par_list):
+            printError("The function '" + func_name + "' requires more arguments ", file_line)
+
+        else:
+            # We need to check if the parameters of the function are the same format as the ones of the list given
+            if func_pars != par_list:
+                printError("Invalid format of arguments for '" + func_name + "' function", file_line)
+
+    # Same but for procedures
+    elif func_name in procedure_list:
+        # We need to check their length
+        if len(func_pars) < len(par_list):
+            printError("The procedure '" + func_name + "' requires less arguments ", file_line)
+
+        elif len(func_pars) > len(par_list):
+            printError("The procedure '" + func_name + "' requires more arguments ", file_line)
+
+        else:
+            # We need to check if the parameters of the function are the same format as the ones of the list given
+            if func_pars != par_list:
+                printError("Invalid format of arguments for the '" + func_name + "' procedure", file_line)
+
+    else:
+        printError(func_name + "is an invalid name for procedures/functions", file_line)
 
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Lexical Analysis
 # ----------------------------------------------------------------------------------------------------------------------
-# This will be used for printing the correct error when something
+# This will be used for printing the correct error when something is wrong
 def printError(error, line):
     print('Error: ' + error + ' at line ' + str(line))
     sys.exit()
+
+
+lex_result = []  # the result list of the lex()
 
 
 def lex():
@@ -184,134 +435,134 @@ def lex():
 
     result = []  # the result lex returns
 
-    while (state != final_state):  # while the character is not in a final state
+    while state != final_state:  # while the character is not in a final state
         file_pos = file.tell()  # save the file's current position
         char = file.read(1)  # char reads the current character from the file
 
         # Start state analysis
-        if (state == start_state):
+        if state == start_state:
 
             # detected a white character
-            if (char in white_characters):
+            if char in white_characters:
                 # staying in the same state
                 token_type = "white character"
                 state = start_state
-                if (char == '\n'):
+                if char == '\n':
                     file_line += 1  # changing file_line
 
             # detected an alphabetic character
-            elif (char in letters):
+            elif char in letters:
                 token_type = "id"
                 prod_word += char
                 state = word_state  # moving to state 1: creating a word
 
             # detected a numerical digit
-            elif (char in digits):
+            elif char in digits:
                 token_type = "number"
                 prod_num += char
                 state = digit_state  # moving to state 2: creating a number
 
             # detected a numerical symbol (+,-,*,/,=)
-            elif (char in num_symbols):
+            elif char in num_symbols:
                 token_string += char
-                if (char == '+'):
+                if char == '+':
                     token_type = "plus"
-                elif (char == '-'):
+                elif char == '-':
                     token_type = "minus"
-                elif (char == '*'):
+                elif char == '*':
                     token_type = "multiply"
-                elif (char == '/'):
+                elif char == '/':
                     token_type = "divide"
-                elif (char == '='):
+                elif char == '=':
                     token_type = "equal"
                 state = final_state
                 file_pos += 1
 
             # detected a lesser than symbol
-            elif (char == '<'):
+            elif char == '<':
                 state = lesser_than_state  # moving to state 3: lesser than state
                 token_type = "lesser than"
                 token_string += char
                 file_pos += 1
 
             # detected a greater than symbol
-            elif (char == '>'):
+            elif char == '>':
                 state = greater_than_state  # moving to state 4: greater than state
                 token_type = "greater than"
                 token_string += char
                 file_pos += 1
 
             # detected a colon symbol
-            elif (char == ':'):
+            elif char == ':':
                 state = colon_state  # moving to state 5: colon (declaration) state
                 token_type = "colon"
                 token_string += char
                 file_pos += 1
 
             # detected a left bracket symbol    
-            elif (char == '{'):
+            elif char == '{':
                 state = final_state
                 token_type = "left bracket"
                 token_string += char
                 file_pos += 1
 
             # detected a right bracket symbol    
-            elif (char == '}'):
+            elif char == '}':
                 state = final_state
                 token_type = "right bracket"
                 token_string += char
                 file_pos += 1
 
             # detected a hashtag (comment) symbol    
-            elif (char == '#'):
+            elif char == '#':
                 state = comment_state  # moving to state 7: comment state
                 token_type = "hashtag1"
                 token_string += char
 
             # detected a comma symbol
-            elif (char == ','):
+            elif char == ',':
                 state = final_state
                 token_type = "comma"
                 token_string += char
                 file_pos += 1
 
             # detected a greek question mark symbol
-            elif (char == ';'):
+            elif char == ';':
                 state = final_state
                 token_type = "question mark"
                 token_string += char
                 file_pos += 1
 
             # detected a left parethensis symbol
-            elif (char == '('):
+            elif char == '(':
                 state = final_state
                 token_type = "left parethensis"
                 token_string += char
                 file_pos += 1
 
             # detected a right parethensis symbol
-            elif (char == ')'):
+            elif char == ')':
                 state = final_state
                 token_type = "right parethensis"
                 token_string += char
                 file_pos += 1
 
             # detected a left block symbol
-            elif (char == '['):
+            elif char == '[':
                 state = final_state
                 token_type = "left block"
                 token_string += char
                 file_pos += 1
 
             # detected a right block symbol
-            elif (char == ']'):
+            elif char == ']':
                 state = final_state
                 token_type = "right block"
                 token_string += char
                 file_pos += 1
 
             # detected a dot symbol (EOF symbol)
-            elif (char == '.'):
+            elif char == '.':
                 state = EOF_state  # moving to state 9: EOF state
                 token_type = "EOF symbol"
                 token_string += char
@@ -322,24 +573,24 @@ def lex():
                 printError(Error_non_valid_symbol, file_line)
 
         # word state analysis
-        elif (state == word_state):
-            if (char in letters or char in digits):
+        elif state == word_state:
+            if char in letters or char in digits:
                 prod_word += char
             else:
                 token_string += prod_word
                 state = final_state
 
             # The produced word exceeds 30 characters, so display error        
-            if (len(prod_word) > 30):
+            if len(prod_word) > 30:
                 printError(Error_string_length, file_line)
 
         # Number state analysis    
-        elif (state == digit_state):
-            if (char in digits):
+        elif state == digit_state:
+            if char in digits:
                 prod_num += char
 
             # detected an alphabetic character after a numerical digit    
-            elif (char in letters):
+            elif char in letters:
                 printError(Error_letter_after_digit, file_line)
 
             else:
@@ -352,17 +603,17 @@ def lex():
             number = int(prod_num)
 
             # The number is out of bounds
-            if ((number < min_value) or (number > max_value)):
+            if (number < min_value) or (number > max_value):
                 printError(Error_out_of_bounds, file_line)
 
         # Lesser than state analysis
-        elif (state == lesser_than_state):
-            if (char == '='):
+        elif state == lesser_than_state:
+            if char == '=':
                 state = final_state
                 token_type = "lesser equal"
                 token_string += char
                 file_pos += 1
-            elif (char == '>'):
+            elif char == '>':
                 state = final_state
                 token_type = "not equal"
                 token_string += char
@@ -371,8 +622,8 @@ def lex():
                 state = final_state
 
         # Greater than state analysis
-        elif (state == greater_than_state):
-            if (char == '='):
+        elif state == greater_than_state:
+            if char == '=':
                 state = final_state
                 token_type = "greater equal"
                 token_string += char
@@ -381,8 +632,8 @@ def lex():
                 state = final_state
 
         # Colon state analysis
-        elif (state == colon_state):
-            if (char == '='):
+        elif state == colon_state:
+            if char == '=':
                 state = final_state
                 token_type = "declaration"
                 token_string += char
@@ -391,35 +642,35 @@ def lex():
                 printError(Error_colon, file_line)
 
         # Comment state
-        elif (state == comment_state):
-            if (char == '#'):
+        elif state == comment_state:
+            if char == '#':
                 state = start_state
                 token_type = "hashtag2"
                 token_string = ''
-            elif (char == '.'):
+            elif char == '.':
                 printError(Error_comments, file_line)
             else:
                 state = comment_state
 
         # EOF state analysis
-        elif (state == EOF_state):
+        elif state == EOF_state:
             # We want to detect if there are characters after the EOF symbols has been detected
             # If there are, the following warning message will be displayed
             file_pos += 1
             file.seek(file_pos)
             char = file.read(1)
-            if (char):
-                if (char not in white_characters):
+            if char:
+                if char not in white_characters:
                     print("Warning: There's code after the EOF symbol was detected")
             state = final_state
 
     # If we reached this state, then a token has been detected
-    if (state == final_state):
+    if state == final_state:
         # Set the files position here for next call of lex()
         file.seek(file_pos)
 
         # Check if the word produced is in the reserved words Cimple implements
-    if (prod_word in reserved):
+    if prod_word in reserved:
         token_type = prod_word
 
     # Declaring the return values of the lex function
@@ -434,19 +685,16 @@ def lex():
 # C file handling
 # ----------------------------------------------------------------------------------------------------------------------
 def c_file_create():
-    global program_name, quad_list, quad_num, T_value_list, T_value
+    global program_name, quad_list, quad_num, T_value_list, T_value, variables
 
-    variables = []  # the variables declared in the program
     variable_string = ""  # will be used for printing the variables
     relops = ["=", ">", "<", "<>", ">=", "<="]   # all the =,>,<,<>,>=,<= symbols
     relop_id = ""  # this wil be used in its respective file.write()
     temp_string = ""  # will be used for printing the temporary variables
 
-    for i in range(quad_num):
-        if(quad_list[i][0] == ":="):  # detected a variable
-            if (quad_list[i][3] not in variables):  # this is a safety measure so there are not any duplicates
-                variables.append(quad_list[i][3])  # add it to the list
-                variable_string += str(quad_list[i][3]) + ","  # convert the list to a string
+    # Converting the variables list to a string 
+    for i in range(len(variables)):
+        variable_string += str(variables[i]) + ","  
 
     variable_string = variable_string[:-1] + ";"  # replace the last "," with ";"
 
@@ -461,29 +709,29 @@ def c_file_create():
     c_file.write("\n \n")
     c_file.write("int main() \n" + "{\n")
 
-    if(len(variables) != 0):
+    if len(variables) != 0:
         c_file.write("\t" + "int " + variable_string + "\n")  # writes all the variables declared
 
-    if(len(T_value_list) != 0):
+    if len(T_value_list) != 0:
         c_file.write("\t" + "int " + temp_string + "\n \n")  # writes all the variables declared
 
     for i in range(quad_num):
         # declaration statement
-        if(quad_list[i][0] == ":="):
+        if quad_list[i][0] == ":=":
             c_file.write("\t" + "L_" + str(i) + ": " + str(quad_list[i][3]) + " = " + str(quad_list[i][1]) + ";")
             c_file.write(" //(" + str(quad_list[i]) + ")" + "\n")
 
         # numerical operation statements
-        elif((quad_list[i][0] == "+") or (quad_list[i][0] == "-") or (quad_list[i][0] == "*") or (quad_list[i][0] == "/")):
+        elif (quad_list[i][0] == "+") or (quad_list[i][0] == "-") or (quad_list[i][0] == "*") or (quad_list[i][0] == "/"):
             c_file.write("\t" + "L_" + str(i) + ": " + str(quad_list[i][3]) + " = " + str(quad_list[i][1]) + " " + str(quad_list[i][0]) + " " + str(quad_list[i][2]) + ";")
             c_file.write(" //(" + str(quad_list[i]) + ")" + "\n")
 
         # if statements
-        elif (quad_list[i][0] in relops):
+        elif quad_list[i][0] in relops:
 
-            if(quad_list[i][0] == "="):  # equal in c is ==
+            if quad_list[i][0] == "=":  # equal in c is ==
                 relop_id = "=="
-            elif(quad_list[i][0] == "<>"):  # not equal in c is !=
+            elif quad_list[i][0] == "<>":  # not equal in c is !=
                 relop_id = "!="
             else:
                 relop_id = str(quad_list[i][0])
@@ -491,32 +739,32 @@ def c_file_create():
             c_file.write(" //(" + str(quad_list[i]) + ")" + "\n")
 
         # jump statement
-        elif (quad_list[i][0] == "jump"):
+        elif quad_list[i][0] == "jump":
             c_file.write("\t" + "L_" + str(i) + ": " + "goto L_" + str(quad_list[i][3]) + ";")
             c_file.write(" //(" + str(quad_list[i]) + ")" + "\n")
 
         # end of program
-        elif (quad_list[i][0] == "halt"):
+        elif quad_list[i][0] == "halt":
             c_file.write("\t" + "L_" + str(i) + ": " + "return 0;")
             c_file.write(" //(" + str(quad_list[i]) + ")" + "\n")
 
         # return statement
-        elif (quad_list[i][0] == "retv"):
-            c_file.write("\t" + "L_" + str(i) + ": " + "return " + str(quad_list[i][0]) + ";")
+        elif quad_list[i][0] == "retv":
+            c_file.write("\t" + "L_" + str(i) + ": " + "return " + str(quad_list[i][1]) + ";")
             c_file.write(" //(" + str(quad_list[i]) + ")" + "\n")
 
         # input - scanf statement
-        elif (quad_list[i][0] == "inp"):
-            c_file.write("\t" + "L_" + str(i) + ": " + "scanf('%d',&" + str(quad_list[i][1]) + ");")
+        elif quad_list[i][0] == "inp":
+            c_file.write("\t" + "L_" + str(i) + ": " + 'scanf("%d",&' + str(quad_list[i][1]) + ");")
             c_file.write(" //(" + str(quad_list[i]) + ")" + "\n")
 
         # output - printf statement
-        elif (quad_list[i][0] == "out"):
-            c_file.write("\t" + "L_" + str(i) + ": " + "printf('%d'," + str(quad_list[i][1]) + ");")
+        elif quad_list[i][0] == "out":
+            c_file.write("\t" + "L_" + str(i) + ": " + 'printf("%d",' + str(quad_list[i][1]) + ");")
             c_file.write(" //(" + str(quad_list[i]) + ")" + "\n")
 
         else:
-            c_file.write("\t" + "L_" + str(i) + ":" + "\t" + "//(" + str(quad_list[i]) + ")" + "\n")
+            c_file.write("\t" + "//(" + str(quad_list[i]) + ")" + "\n")
 
     c_file.write("}")
     c_file.close()  # the file is completed
@@ -542,7 +790,11 @@ def int_file_create():
 # ----------------------------------------------------------------------------------------------------------------------
 
 def syntax():
-    global lex_result, function_flag
+    global lex_result, function_flag, symbol_list
+
+    # Creating first scope, scope 0
+    add_scope(0, emptylist())  # nesting level 0 and an empty entity list
+
     lex_result = lex()  # the result of the lex() is stored here and will be used for the analysis
 
     # Execute the program analysis
@@ -552,7 +804,7 @@ def syntax():
 
     int_file_create()
 
-    if(function_flag is False):  # if we don't have any functions or procedures we can create the C file
+    if function_flag is False:  # if we don't have any functions or procedures we can create the C file
         c_file_create()
 
     return
@@ -562,18 +814,18 @@ def syntax():
 def program():
     global lex_result, file_line, program_name  # the file line will be used for the error messages
 
-    if (lex_result[0] == 'program'):
+    if lex_result[0] == 'program':
         # program token detected
         lex_result = lex()  # search for next token
 
-        if (lex_result[0] == 'id'):
+        if lex_result[0] == 'id':
 
             program_name = lex_result[1]  # save the program's name
             lex_result = lex()  # search for next token
 
             block(program_name)
 
-            if (lex_result[0] == 'EOF symbol'):
+            if lex_result[0] == 'EOF symbol':
                 # End of file reached
                
                 return
@@ -589,7 +841,7 @@ def program():
 
 # a block with declarations , subprogram and statement
 def block(name):
-    global program_name
+    global program_name, main_state_flag
 
     # check if there are declarations
     declarations()
@@ -598,28 +850,41 @@ def block(name):
     subprograms()
     genquad("begin_block", name, "_", "_")
 
-    if(name != program_name):
+    if name != program_name:
+        # Search for the specific function and save it to func
+        func = search_entity(name)
+        # The next_quad is the starting one for the function
+        func.start_quad = nextquad()
         # check if there are statements
         statements()
+
     else:
+        # we are in the main part of the program
+        main_state_flag = True
         # check if there are statements
         statements()
         genquad("halt", "_", "_", "_")
         genquad("end_block", program_name, "_", "_")
 
+    display_symbol_list()
+
 
 # declaration of variables , zero or more " declare " allowed
 def declarations():
-    global lex_result, file_line
+    global lex_result, file_line, variables
 
-    while (lex_result[0] == 'declare'):
+    while lex_result[0] == 'declare':
         # declare token detected
         lex_result = lex()  # search for next token
 
         # check the varlist() if there are one or more words
         varlist()
 
-        if (lex_result[0] == 'question mark'):
+        # We need to check if there are duplicates
+        # if duplicate_check() > 2:  # if we have found at least one duplicate
+        #    printError("Error: We found duplicate in the declared entities ", file_line)
+
+        if lex_result[0] == 'question mark':
             lex_result = lex()  # search for next token
 
         else:
@@ -631,28 +896,54 @@ def declarations():
 def varlist():
     global lex_result, file_line
 
-    if (lex_result[0] == 'id'):
+    if lex_result[0] == 'id':
         # detected a variable name
-        lex_result = lex()  # search for next token
+        name = lex_result[1]
 
-        while (lex_result[0] == 'comma'):
+        # We need to check if there are duplicates
+        if name not in variables:
+            variables.append(name)
+        else:
+            printError("We have found a duplicate" + name, file_line)
+
+        # Symbol Array - variable add
+        offset = symbol_list[-1].offset
+        ent_list = symbol_list[-1].entity_list
+        add_entity("variable", name, offset, "", ent_list)
+
+        # The offset of the current scope is the offset of the current entity increased by 4
+        symbol_list[-1].offset = symbol_list[-1].entity_list[-1].offset + 4
+
+        lex_result = lex()  # search for next token
+        while lex_result[0] == 'comma':
             # detected ',' symbol so there may be another or more variables
             lex_result = lex()  # search for next token
 
-            if (lex_result[0] == 'id'):
+            if lex_result[0] == 'id':
+                name = lex_result[1]
+                variables.append(lex_result[1])
+
+                # Same as before
+                offset = symbol_list[-1].offset
+                ent_list = symbol_list[-1].entity_list
+                add_entity("variable", name, offset, "", ent_list)
+
+                # The offset of the current scope is the offset of the current entity increased by 4
+                symbol_list[-1].offset = symbol_list[-1].entity_list[-1].offset + 4
+
                 lex_result = lex()  # search for next token
 
             else:
                 printError("Varlist: There's not a variable after the ',' symbol ", file_line)
 
-    return
+    return 
 
 
 # zero or more subprograms allowed
 def subprograms():
     global lex_result, function_flag
 
-    while ((lex_result[0] == 'procedure') or (lex_result[0] == 'function')):
+    while (lex_result[0] == 'procedure') or (lex_result[0] == 'function'):
         # detected a 'procedure' or 'function' keyword  proceed to subprogram analysis
         function_flag = True  # we don't need to create a C file
         subprogram()
@@ -662,30 +953,52 @@ def subprograms():
 
 # a subprogram is a function or a procedure, followed by parameters and block
 def subprogram():
-    global lex_result, file_line, function_list, procedure_list
+    global lex_result, file_line, function_list, procedure_list, procedure_state_flag, return_flag
 
     # Procedure's analysis
-    if (lex_result[0] == 'procedure'):
+    if lex_result[0] == 'procedure':
         # procedure token detected
         lex_result = lex()  # search for next token
+        procedure_state_flag = True  # we are going to need it for later use
 
-        if (lex_result[0] == 'id'):
+        if lex_result[0] == 'id':
             # procedure's name is given
             name = lex_result[1]  # save the name of the procedure
             lex_result = lex()  # search for next token
 
-            if (lex_result[0] == 'left parethensis'):
+            if name not in procedure_list:
+                procedure_list.append(name)
+            else:
+                printError("We found duplicate" + name + " as a procedure", file_line)
+
+            # Symbol Array - function add
+            ent_list = symbol_list[-1].entity_list
+            add_entity("function", name, "", "", ent_list)
+
+            # We need to check if there are duplicates
+            # if duplicate_check() > 1:  # if we have found at least one duplicate
+            #    print("Error: We found duplicate in the declared entities ")
+            #    sys.exit()
+
+            if lex_result[0] == 'left parethensis':
 
                 lex_result = lex()  # search for next token
 
-                formalparlist()  # inside parethensis parameters analysis
+                # We are now compiling the function so we need to add +1 the nesting level
+                nest_level = symbol_list[-1].nesting_level  # save the current nesting level
+                add_scope(nest_level, ent_list)  # creates the new scope for the function analysis
 
-                if (lex_result[0] == 'right parethensis'):
+                formalparlist(name)  # inside parethensis parameters analysis
+
+                if lex_result[0] == 'right parethensis':
 
                     lex_result = lex()  # search for next token  # search for next token
 
                     block(name)  # go back to block() to check the other functions
                     genquad("end_block", name, "_", "_")
+
+                    # We are done with the procedure's analysis
+                    procedure_state_flag = False
 
                     return
                 else:
@@ -696,26 +1009,51 @@ def subprogram():
             printError("Procedure's name was not detected ", file_line)
 
     # Function's analysis
-    elif (lex_result[0] == 'function'):
+    elif lex_result[0] == 'function':
         # function token detected
         lex_result = lex()  # search for next token
 
-        if (lex_result[0] == 'id'):
+        if lex_result[0] == 'id':
             # function's name is given
             name = lex_result[1]  # save the name of the function
             lex_result = lex()  # search for next token
-            function_list.append(name)  # save the name of the function to the list
 
-            if (lex_result[0] == 'left parethensis'):
+            # We need to check for duplicates
+            if name not in function_list:
+                function_list.append(name)
+            else:
+                printError("We found duplicate" + name + " as a function", file_line)
+
+            # Symbol Array - function add
+            ent_list = symbol_list[-1].entity_list
+            add_entity("function", name, "", "", ent_list)
+
+            # We need to check if there are duplicates
+            # if duplicate_check() > 1:  # if we have found at least one duplicate
+            #    print("Error: We found duplicate(s) in the declared entities ")
+            #    sys.exit()
+
+            if lex_result[0] == 'left parethensis':
                 lex_result = lex()  # search for next token
 
-                formalparlist()  # inside parethensis parameters analysis
+                formalparlist(name)  # inside parethensis parameters analysis
 
-                if (lex_result[0] == 'right parethensis'):
+                if lex_result[0] == 'right parethensis':
                     lex_result = lex()  # search for next token
+
+                    # We are now compiling the function so we need to add +1 the nesting level
+                    nest_level = symbol_list[-1].nesting_level  # saves the current nesting level
+                    add_scope(nest_level, ent_list)  # creates the new scope for the function analysis
 
                     block(name)  # go back to block() to check the other functions
                     genquad("end_block", name, "_", "_")
+
+                    if not return_flag:
+                        print("Return statement has not been found inside the function" + "'" + name + "'")
+                        sys.exit()
+                    else:
+                        # We are setting it to False so the next function ( if there is one ) can be checked
+                        return_flag = False
 
                     return
 
@@ -728,60 +1066,93 @@ def subprogram():
 
 
 # list of formal parameters
-def formalparlist():
+def formalparlist(func_name):
     global lex_result
 
-    formalparitem()
+    formalparitem(func_name)
 
-    while (lex_result[0] == 'comma'):
+    while lex_result[0] == 'comma':
         lex_result = lex()  # search for next token
 
-        formalparitem()
+        formalparitem(func_name)
 
     return
 
 
 # a formal parameter (" in ": by value , " inout " by reference )
-def formalparitem():
-    global lex_result, file_line
+def formalparitem(func_name):
+    global lex_result, file_line, symbol_list, function_list, procedure_list
 
-    if (lex_result[0] == 'in'):
+    # We need to check if we have functions/procedures with the 'func_name' name
+    if func_name not in function_list or procedure_list:
+        printError("The function/procedure with name '" + func_name + "' isn't declared", file_line)
+
+    # Now we need to search for the entity - function/procedure in order to update their argument_list
+    entity = search_entity(func_name)
+    arg_list = entity.argument_list
+
+    if lex_result[0] == 'in':
         # in token detected
+        par = lex_result[0]
+
+        argument = add_argument(par, arg_list)  # added the argument created
+
         lex_result = lex()  # search for next token
 
-        if (lex_result[0] == 'id'):
+        if lex_result[0] == 'id':
+
+            # Symbol Array - parameter add
+            offset = symbol_list[-1].offset
+            ent_list = symbol_list[-1].entity_list
+            name = lex_result[1]
+            add_entity("parameter", name, offset, argument.parmode, ent_list)
+            # The offset of the current scope is the offset of the current entity increased by 4
+            symbol_list[-1].offset = symbol_list[-1].entity_list[-1].offset + 4
+
             lex_result = lex()  # search for next token
 
             return
         else:
             printError("Formalparitem: A value name was espected after 'in' statement ", file_line)
 
-    elif (lex_result[0] == 'inout'):
+    elif lex_result[0] == 'inout':
         # inout token detected
+        par = lex_result[0]
+
+        argument = add_argument(par, arg_list)  # added the argument created
+
         lex_result = lex()  # search for next token
 
-        if (lex_result[0] == 'id'):
+        if lex_result[0] == 'id':
+            # Symbol Array - parameter add
+            offset = symbol_list[-1].offset
+            ent_list = symbol_list[-1].entity_list
+            name = lex_result[1]
+            add_entity("parameter", name, offset, argument.parmode, ent_list)
+            # The offset of the current scope is the offset of the current entity increased by 4
+            symbol_list[-1].offset = symbol_list[-1].entity_list[-1].offset + 4
+
             lex_result = lex()  # search for next token
 
             return
         else:
-            printError("Formalparitem: A value name was espected after 'inout' statement ", file_line)
+            printError("Formalparitem: A value name was expected after 'inout' statement ", file_line)
 
 
 # one or more statements
 def statements():
     global lex_result, file_line
 
-    if (lex_result[0] == 'left bracket'):
+    if lex_result[0] == 'left bracket':
         lex_result = lex()  # search for next token
         statement()
 
-        while (lex_result[0] == 'question mark'):
+        while lex_result[0] == 'question mark':
             lex_result = lex()  # search for next token
 
             statement()
 
-        if (lex_result[0] == 'right bracket'):
+        if lex_result[0] == 'right bracket':
             lex_result = lex()  # search for next token
             return
 
@@ -792,7 +1163,7 @@ def statements():
 
         statement()
 
-        if (lex_result[0] == 'question mark'):
+        if lex_result[0] == 'question mark':
             lex_result = lex()  # search for next token
 
             return
@@ -804,42 +1175,42 @@ def statements():
 def statement():
     global lex_result
 
-    if (lex_result[0] == 'id'):
+    if lex_result[0] == 'id':
         assignment_stat()
 
-    elif (lex_result[0] == 'if'):
+    elif lex_result[0] == 'if':
         # if token detected
         if_stat()
 
-    elif (lex_result[0] == 'while'):
+    elif lex_result[0] == 'while':
         # while token detected
         while_stat()
 
-    elif (lex_result[0] == 'switchcase'):
+    elif lex_result[0] == 'switchcase':
         # switchcase token detected
         switchcase_stat()
 
-    elif (lex_result[0] == 'forcase'):
+    elif lex_result[0] == 'forcase':
         # forcase token detected
         forcase_stat()
 
-    elif (lex_result[0] == 'incase'):
+    elif lex_result[0] == 'incase':
         # incase token detected
         incase_stat()
 
-    elif (lex_result[0] == 'call'):
+    elif lex_result[0] == 'call':
         # call token detected
         call_stat()
 
-    elif (lex_result[0] == 'return'):
+    elif lex_result[0] == 'return':
         # return token detected
         return_stat()
 
-    elif (lex_result[0] == 'input'):
+    elif lex_result[0] == 'input':
         # input token detected
         input_stat()
 
-    elif (lex_result[0] == 'print'):
+    elif lex_result[0] == 'print':
         # print token detected
         print_stat()
 
@@ -848,14 +1219,19 @@ def statement():
 
 # assignment statement
 def assignment_stat():
-    global lex_result, file_line
+    global lex_result, file_line, variables
 
     # S -> id := E {P1}
-    if (lex_result[0] == 'id'):
+    if lex_result[0] == 'id':
         id_place = lex_result[1]
+
+        # we need to check if the id responds to a declared variable
+        if id_place not in variables:
+            printError("'" + id_place + "' variable has not been declared", file_line)
+
         lex_result = lex()  # search for next token
 
-        if (lex_result[0] == 'declaration'):
+        if lex_result[0] == 'declaration':
             lex_result = lex()  # search for next token
 
             E_place = expression()  # E
@@ -873,17 +1249,17 @@ def assignment_stat():
 def if_stat():
     global lex_result, file_line
 
-    if (lex_result[0] == 'if'):
+    if lex_result[0] == 'if':
         # if token detected
         lex_result = lex()  # search for next token
 
-        if (lex_result[0] == 'left parethensis'):
+        if lex_result[0] == 'left parethensis':
             lex_result = lex()  # search for next token
 
             # S -> if B then {P1} S1 {P2} TAIL {P3}
             B_list = condition()  # B_list[0] = B.true and B_list[1] = B.false
 
-            if (lex_result[0] == 'right parethensis'):
+            if lex_result[0] == 'right parethensis':
                 lex_result = lex()  # search for next token
                 # {P1}
                 backpatch(B_list[0], nextquad())
@@ -914,7 +1290,7 @@ def elsepart():
     global lex_result
 
     # TAIL -> else S2| TAIL -> e
-    if (lex_result[0] == 'else'):
+    if lex_result[0] == 'else':
         # else token detected
         lex_result = lex()  # search for next token
 
@@ -928,17 +1304,17 @@ def while_stat():
     global lex_result, file_line
 
     # S -> while {P1} B do {P2} S1 {P3}
-    if (lex_result[0] == 'while'):
+    if lex_result[0] == 'while':
         lex_result = lex()  # search for next token
         # {P1}
         B_quad = nextquad()
 
-        if (lex_result[0] == 'left parethensis'):
+        if lex_result[0] == 'left parethensis':
             lex_result = lex()  # search for next token
 
             B_list = condition()  # B_list[0] = B.true and B_list[1] = B.false
 
-            if (lex_result[0] == 'right parethensis'):
+            if lex_result[0] == 'right parethensis':
                 lex_result = lex()  # search for next token
                 # {P2}
                 backpatch(B_list[0], nextquad())
@@ -965,22 +1341,22 @@ def switchcase_stat():
     #   ((cond): {P2} S1 break {P3})*
     #   default: S2 {P4}
 
-    if (lex_result[0] == 'switchcase'):
+    if lex_result[0] == 'switchcase':
         # switchcase token detected
         lex_result = lex()  # search for next token
         # {P1}:
         exitlist = emptylist()
 
-        while (lex_result[0] == 'case'):
+        while lex_result[0] == 'case':
             # case token detected
             lex_result = lex()  # search for next token
 
-            if (lex_result[0] == 'left parethensis'):
+            if lex_result[0] == 'left parethensis':
                 lex_result = lex()  # search for next token
 
                 cond_list = condition()  # cond_list[0] = cond.true and cond_list[1] = cond.false
 
-                if (lex_result[0] == 'right parethensis'):
+                if lex_result[0] == 'right parethensis':
                     lex_result = lex()  # search for next token
 
                     # {P2}:
@@ -999,7 +1375,7 @@ def switchcase_stat():
             else:
                 printError("Left parethensis was not detected before 'switchcase' statement", file_line)
 
-        if (lex_result[0] == 'default'):
+        if lex_result[0] == 'default':
             # default token detected
             lex_result = lex()  # search for next token
 
@@ -1025,22 +1401,22 @@ def forcase_stat():
     #            end do )*
     # endforcase
 
-    if (lex_result[0] == 'forcase'):
+    if lex_result[0] == 'forcase':
         # forcase token detected
         lex_result = lex()  # search for next token
 
         # {P1}:
         p1quad = nextquad()
 
-        while (lex_result[0] == 'case'):
+        while lex_result[0] == 'case':
             lex_result = lex()  # search for next token
 
-            if (lex_result[0] == 'left parethensis'):
+            if lex_result[0] == 'left parethensis':
                 lex_result = lex()  # search for next token
 
                 cond_list = condition()  # cond_list[0] = cond.true and cond_list[1] = cond.false
 
-                if (lex_result[0] == 'right parethensis'):
+                if lex_result[0] == 'right parethensis':
                     lex_result = lex()  # search for next token
 
                     # {P2}:
@@ -1055,7 +1431,7 @@ def forcase_stat():
             else:
                 printError("Left parethensis was not detected before 'forcase' statement", file_line)
 
-        if (lex_result[0] == 'default'):
+        if lex_result[0] == 'default':
             # default token detected
             lex_result = lex()  # search for next token
 
@@ -1079,24 +1455,32 @@ def incase_stat():
     #            end do )*
     # endincase {P4}
 
-    if (lex_result[0] == 'incase'):
+    if lex_result[0] == 'incase':
         # incase token detected
         # {P1}:
         w = newtemp()
+
+        # We have created a new temporary variable
+        offset = symbol_list[-1].offset
+        ent_list = symbol_list[-1].entity_list
+        add_entity("temp_var", w, offset, "", ent_list)
+        # The offset of the current scope is the offset of the current entity increased by 4
+        symbol_list[-1].offset = symbol_list[-1].entity_list[-1].offset + 4
+
         p1quad = nextquad()
         genquad(":=", 1, "_", w)
         lex_result = lex()  # search for next token
 
-        while (lex_result[0] == 'case'):
+        while lex_result[0] == 'case':
             # case token detected
             lex_result = lex()  # search for next token
 
-            if (lex_result[0] == 'left parethensis'):
+            if lex_result[0] == 'left parethensis':
                 lex_result = lex()  # search for next token
 
                 cond_list = condition()  # cond_list[0] = cond.true and cond_list[1] = cond.false
 
-                if (lex_result[0] == 'right parethensis'):
+                if lex_result[0] == 'right parethensis':
                     lex_result = lex()  # search for next token
 
                     # {P2}:
@@ -1119,19 +1503,28 @@ def incase_stat():
 
 # return statement
 def return_stat():
-    global lex_result, file_line
+    global lex_result, file_line, main_state_flag, procedure_state_flag
 
-    if (lex_result[0] == 'return'):
+    if lex_result[0] == 'return':
         # return token detected
         lex_result = lex()  # search for next token
 
-        if (lex_result[0] == 'left parethensis'):
+        # We need to check if we detected this statement on
+        # the main part of the program (main_state_flag)
+        # or inside a procedure (procedure_state_flag)
+        # both of them must not have the return statement
+        if main_state_flag:
+            printError("Return statement detected outside function", file_line)
+        if procedure_state_flag:
+            printError("Return statement detected inside a procedure", file_line)
+
+        if lex_result[0] == 'left parethensis':
             lex_result = lex()  # search for next token
 
             # S -> return (E) {P1}
             E_place = expression()
 
-            if (lex_result[0] == 'right parethensis'):
+            if lex_result[0] == 'right parethensis':
                 lex_result = lex()  # search for next token
 
                 genquad("retv", E_place, "_", "_")
@@ -1145,23 +1538,30 @@ def return_stat():
 
 # call statement
 def call_stat():
-    global lex_result, file_line, function_flag
+    global lex_result, file_line, function_flag, procedure_list
 
-    if (lex_result[0] == 'call'):
+    if lex_result[0] == 'call':
         # call token detected
         lex_result = lex()  # search for next token
         function_flag = True
 
-        if (lex_result[0] == 'id'):
+        if lex_result[0] == 'id':
             name = lex_result[1]
             lex_result = lex()  # search for next token
 
-            if (lex_result[0] == 'left parethensis'):
+            # Checking if the name of the function/procedure has not been declared
+            if name not in procedure_list:  # if False
+                printError("Procedure" + "'" + name + "' has not been declared", file_line)
+
+            if lex_result[0] == 'left parethensis':
                 lex_result = lex()  # search for next token
 
-                actualparlist()
+                par_list = actualparlist()
 
-                if (lex_result[0] == 'right parethensis'):
+                # We need to check if we have the correct format of the parameters
+                param_check(name, par_list)
+
+                if lex_result[0] == 'right parethensis':
                     lex_result = lex()  # search for next token
 
                     genquad("call", name, "_", "_")  # this is needed for both procedure or function
@@ -1184,17 +1584,17 @@ def call_stat():
 def print_stat():
     global lex_result, file_line
 
-    if (lex_result[0] == 'print'):
+    if lex_result[0] == 'print':
         # print token detected
         lex_result = lex()  # search for next token
 
-        if (lex_result[0] == 'left parethensis'):
+        if lex_result[0] == 'left parethensis':
             lex_result = lex()  # search for next token
 
             # S -> print (E) {P1}
             E_place = expression()
 
-            if (lex_result[0] == 'right parethensis'):
+            if lex_result[0] == 'right parethensis':
                 lex_result = lex()  # search for next token
 
                 genquad("out", E_place, "_", "_")
@@ -1209,21 +1609,25 @@ def print_stat():
 
 # input statement
 def input_stat():
-    global lex_result, file_line
+    global lex_result, file_line, variables
 
-    if (lex_result[0] == 'input'):
+    if lex_result[0] == 'input':
         # input token detected
         lex_result = lex()  # search for next token
 
-        if (lex_result[0] == 'left parethensis'):
+        if lex_result[0] == 'left parethensis':
             lex_result = lex()  # search for next token
             # S -> input (id) {P1}
 
-            if (lex_result[0] == 'id'):
+            if lex_result[0] == 'id':
                 id_place = lex_result[1]
                 lex_result = lex()  # search for next token
 
-                if (lex_result[0] == 'right parethensis'):
+                # We need to check that the variable is declared
+                if id_place not in variables:
+                    printError("The variable" + id_place + "has not been declared", file_line)
+
+                if lex_result[0] == 'right parethensis':
                     lex_result = lex()  # search for next token
 
                     genquad("inp", id_place, "_", "_")
@@ -1242,40 +1646,47 @@ def input_stat():
 # list of actual parameters
 def actualparlist():
     global lex_result, file_line
+    par_list = []  # list of parameters types
+    par = actualparitem()  # search for a parameter and save its type
+    par_list.append(par)  # add it to the list
 
-    actualparitem()
-
-    while (lex_result[0] == 'comma'):
+    while lex_result[0] == 'comma':
         lex_result = lex()
 
-        actualparitem()
+        # Same as before for more than one parameters
+        par = actualparitem()
+        par_list.append(par)
 
-    return
+    return par_list
 
 
 # an actual parameter (" in ": by value , " inout " by reference )
 def actualparitem():
     global lex_result, file_line
 
-    if (lex_result[0] == 'in'):
+    result = ""  # the parameter type we will return if found
+
+    if lex_result[0] == 'in':
         # in token detected
+        result = lex_result[0]
         lex_result = lex()  # search for next token
 
         a_place = expression()  # in a
         genquad("par", a_place, "CV", "_")
 
-    elif (lex_result[0] == 'inout'):
+    elif lex_result[0] == 'inout':
         # inout token detected
+        result = lex_result[0]
         lex_result = lex()  # search for next token
 
-        if (lex_result[0] == 'id'):
-            b_place = lex_result[1] # inout b
+        if lex_result[0] == 'id':
+            b_place = lex_result[1]  # inout b
             lex_result = lex()  # search for next token
             genquad("par", b_place, "REF", "_")
 
         else:
             printError("Actualparitem: Value name was not detected after 'inout' statement", file_line)
-    return
+    return result
 
 
 # boolean expression
@@ -1290,7 +1701,7 @@ def condition():
     B_true = Q1_list[0]  # B.true = Q1.true
     B_false = Q1_list[1]  # B.false = Q1.false
 
-    while (lex_result[0] == 'or'):
+    while lex_result[0] == 'or':
         # {P2}:
         backpatch(B_false, nextquad())
         lex_result = lex()  # search for next token
@@ -1318,7 +1729,7 @@ def boolterm():
     Q_true = R1_list[0]  # Q.true = R1.true
     Q_false = R1_list[1]  # Q.false = R1.false
 
-    while (lex_result[0] == 'and'):  # and token detected
+    while lex_result[0] == 'and':  # and token detected
         # {P2}:
         backpatch(Q_true, nextquad())
         lex_result = lex()  # search for next token
@@ -1338,16 +1749,16 @@ def boolfactor():
     global lex_result, file_line
 
     # R -> not (B) {P1}
-    if (lex_result[0] == 'not'):
+    if lex_result[0] == 'not':
         # not statement detected
         lex_result = lex()  # search for next token
 
-        if (lex_result[0] == 'left block'):
+        if lex_result[0] == 'left block':
             lex_result = lex()  # search for next token
 
             B_list = condition()
 
-            if (lex_result[0] == 'right block'):
+            if lex_result[0] == 'right block':
                 lex_result = lex()  # search for next token
                 R_true = B_list[1]  # R.true = B.false
                 R_false = B_list[0]  # R.false = B.true
@@ -1362,12 +1773,12 @@ def boolfactor():
 
     # not statement is not detected
     # R -> (B) {P1}
-    elif (lex_result[0] == 'left block'):
+    elif lex_result[0] == 'left block':
         lex_result = lex()  # search for next token
 
         B_list = condition()
 
-        if (lex_result[0] == 'right block'):
+        if lex_result[0] == 'right block':
             lex_result = lex()  # search for next token
 
             R_true = B_list[0]  # R.true = B.true
@@ -1407,10 +1818,10 @@ def expression():
     T1_place = term()
 
     # Checks if T1 is a negative number
-    if(symbol == "-"):
+    if symbol == "-":
         T1_place = "-" + T1_place
 
-    while (lex_result[0] == 'plus' or lex_result[0] == 'minus'):
+    while lex_result[0] == 'plus' or lex_result[0] == 'minus':
         symbol = lex_result[1]
         add_op()
 
@@ -1418,6 +1829,14 @@ def expression():
 
         # {P1}:
         w = newtemp()
+
+        # We have created a new temporary variable
+        offset = symbol_list[-1].offset
+        ent_list = symbol_list[-1].entity_list
+        add_entity("temp_var", w, offset, "", ent_list)
+        # The offset of the current scope is the offset of the current entity increased by 4
+        symbol_list[-1].offset = symbol_list[-1].entity_list[-1].offset + 4
+
         genquad(symbol, T1_place, T2_place, w)
         T1_place = w
 
@@ -1434,13 +1853,21 @@ def term():
     # T -> F1 ( x F2 {P1}) * {P2}
     F1_place = factor()
 
-    while (lex_result[0] == 'multiply' or lex_result[0] == 'divide'):
+    while lex_result[0] == 'multiply' or lex_result[0] == 'divide':
         symbol = lex_result[1]
         mul_op()
 
         F2_place = factor()
         # {P1}:
         w = newtemp()
+
+        # We have created a new temporary variable
+        offset = symbol_list[-1].offset
+        ent_list = symbol_list[-1].entity_list
+        add_entity("temp_var", w, offset, "", ent_list)
+        # The offset of the current scope is the offset of the current entity increased by 4
+        symbol_list[-1].offset = symbol_list[-1].entity_list[-1].offset + 4
+
         genquad(symbol, F1_place, F2_place, w)
         F1_place = w
 
@@ -1454,52 +1881,66 @@ def term():
 def factor():
     global lex_result, file_line
 
-    if (lex_result[0] == 'number'):
+    if lex_result[0] == 'number':
         F_place = lex_result[1]
         lex_result = lex()  # search for next token
 
         return F_place
 
-    elif (lex_result[0] == 'left parethensis'):
+    elif lex_result[0] == 'left parethensis':
         lex_result = lex()  # search for next token
 
         F_place = expression()  # F.place = E.place
 
-        if (lex_result[0] == 'right parethensis'):
+        if lex_result[0] == 'right parethensis':
             lex_result = lex()  # search for next token
 
             return F_place
         else:
             printError("Factor: Right parethensis was not detected after the number expression", file_line)
 
-    elif (lex_result[0] == 'id'):
+    elif lex_result[0] == 'id':
         F_place = lex_result[1]  # F.place = id.place
 
         idtail(F_place)
+
         return F_place
+
     else:
         printError("Factor: Number value or variable name was expected ", file_line)
 
 
-# follows a function of procedure ( parethensis and parameters )
+# follows a function or procedure ( parethensis and parameters )
 def idtail(func_name):
     global lex_result, file_line
 
     lex_result = lex()  # search for next token
 
-    if (lex_result[0] == 'left parethensis'):
+    if lex_result[0] == 'left parethensis':
         lex_result = lex()  # search for next token
 
-        actualparlist()
+        par_list = actualparlist()
+
+        # We need to check if we have the correct format of the parameters
+        param_check(func_name, par_list)
 
         w = newtemp()
+
+        # We have created a new temporary variable
+        offset = symbol_list[-1].offset
+        ent_list = symbol_list[-1].entity_list
+        add_entity("temp_var", w, offset, "", ent_list)
+        # The offset of the current scope is the offset of the current entity increased by 4
+        symbol_list[-1].offset = symbol_list[-1].entity_list[-1].offset + 4
+
         genquad("par", w, "RET", "_")
         genquad("call", func_name, "_", "_")  # we are calling a function
 
-        if (lex_result[0] == 'right parethensis'):
+        if lex_result[0] == 'right parethensis':
             lex_result = lex()  # search for next token
         else:
             printError("Right parethensis was not detected", file_line)
+
     return
 
 
@@ -1509,7 +1950,7 @@ def optional_sign():
 
     symbol = lex_result[1]  # the '+' or '-' symbol if detected
 
-    if ((lex_result[0] == 'plus') or (lex_result[0] == 'minus')):
+    if (lex_result[0] == 'plus') or (lex_result[0] == 'minus'):
         # '+' or '-' tokens detected
         add_op()
 
@@ -1522,7 +1963,7 @@ def relational_op():
 
     relationals = ['equal', 'lesser than', 'lesser equal', 'not equal', 'greater than', 'greater equal']
 
-    if (lex_result[0] in relationals):  # '=','<','<=','<>','>','>='
+    if lex_result[0] in relationals:  # '=','<','<=','<>','>','>='
         symbol = lex_result[1]  # save the symbol found
         lex_result = lex()  # search for next token
 
@@ -1535,7 +1976,7 @@ def relational_op():
 def add_op():
     global lex_result
 
-    if ((lex_result[0] == 'plus') or (lex_result[0] == 'minus')):  # + or -
+    if (lex_result[0] == 'plus') or (lex_result[0] == 'minus'):  # + or -
         lex_result = lex()  # search for next token
 
         return
@@ -1545,7 +1986,7 @@ def add_op():
 def mul_op():
     global lex_result
 
-    if ((lex_result[0] == 'multiply') or (lex_result[0] == 'divide')):  # * or /
+    if (lex_result[0] == 'multiply') or (lex_result[0] == 'divide'):  # * or /
         lex_result = lex()  # search for next token  
 
     return
