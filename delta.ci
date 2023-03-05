@@ -1,0 +1,20 @@
+program delta
+
+	# this is a simple func for testing the creation of only int file # 
+	
+	declare a,b,c,result;
+	
+	function func(inout a, inout b, inout c){
+		return ( b * b - 4 * a * c);
+	}
+	
+	# main #
+	{
+	a:= 1;
+	b:=5;
+	c:=4;
+
+	result := func(inout a, inout b, inout c);
+	print(result);
+	}.
+	
